@@ -36,6 +36,7 @@ type LocalVault struct {
 
 	actors *actor.Pool
 	idx    *index.Index
+	w      *watcher
 
 	mu    sync.RWMutex
 	notes map[string]domain.NoteSummary // indexKey -> summary
@@ -64,11 +65,14 @@ func New(scope, root string, idxCfg index.Config) (*LocalVault, error) {
 	if err := v.scanVault(); err != nil {
 		return nil, fmt.Errorf("scan vault: %w", err)
 	}
+	v.w = newWatcher(v)
+	v.w.start()
 	return v, nil
 }
 
 // Close shuts down background goroutines.
 func (v *LocalVault) Close() {
+	v.w.close()
 	v.actors.Close()
 	v.idx.Close()
 }
@@ -365,7 +369,10 @@ func (v *LocalVault) Stats(_ context.Context) (domain.VaultStats, error) {
 
 // Health returns vault diagnostic information including case collisions.
 func (v *LocalVault) Health(_ context.Context) (domain.VaultHealth, error) {
-	h := domain.VaultHealth{WatcherStatus: "ok"}
+	h := domain.VaultHealth{
+		WatcherStatus: v.w.watcherStatus.Load().(string),
+		SyncConflicts: int(v.w.syncConflicts.Load()),
+	}
 	if v.caps.CaseSensitive {
 		h.CaseCollisions = v.detectCaseCollisions()
 	}
