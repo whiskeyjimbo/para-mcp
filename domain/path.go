@@ -103,6 +103,15 @@ func checkSymlinks(vaultRoot, path string) error {
 	return nil
 }
 
+// IndexKey returns the index lookup key for a normalized path.
+// On case-insensitive vaults (caseSensitive=false) the key is lowercased.
+func IndexKey(path string, caseSensitive bool) string {
+	if caseSensitive {
+		return path
+	}
+	return strings.ToLower(path)
+}
+
 // evalSymlinksPartial walks up the path until it finds an existing component
 // and evaluates symlinks on that, returning the real path of the deepest
 // existing ancestor.
