@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -13,7 +14,6 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/vault"
 )
 
-// allowedScopes is the fixed scope list for a single personal vault.
 var allowedScopes = []domain.ScopeID{"personal"}
 
 // Build constructs and returns an MCPServer wired to svc.
@@ -112,7 +112,10 @@ func toolNoteUpdateBody() mcplib.Tool {
 }
 
 func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, _ := req.RequireString("scope")
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
@@ -139,7 +142,10 @@ func toolNotePatchFrontMatter() mcplib.Tool {
 }
 
 func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, _ := req.RequireString("scope")
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
@@ -170,7 +176,10 @@ func toolNoteMove() mcplib.Tool {
 }
 
 func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, _ := req.RequireString("scope")
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
@@ -196,12 +205,14 @@ func toolNoteArchive() mcplib.Tool {
 }
 
 func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, _ := req.RequireString("scope")
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	// Derive archives path: replace first segment with "archives".
 	newPath, err := toArchivePath(path)
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
@@ -223,13 +234,15 @@ func toolNoteDelete() mcplib.Tool {
 }
 
 func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, _ := req.RequireString("scope")
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	soft := req.GetBool("soft", true)
-	err = h.svc.Delete(ctx, domain.NoteRef{Scope: scope, Path: path}, soft)
+	err = h.svc.Delete(ctx, domain.NoteRef{Scope: scope, Path: path}, req.GetBool("soft", true))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -244,7 +257,10 @@ func toolNotesList() mcplib.Tool {
 		mcplib.WithString("project", mcplib.Description("Filter by project")),
 		mcplib.WithArray("tags", mcplib.WithStringItems(), mcplib.Description("All-of tag filter")),
 		mcplib.WithArray("categories", mcplib.WithStringItems(), mcplib.Description("Limit to PARA categories")),
-		mcplib.WithString("sort", mcplib.Enum("updated", "created", "title"), mcplib.Description("Sort field")),
+		mcplib.WithString("sort",
+			mcplib.Enum(string(domain.SortByUpdated), string(domain.SortByCreated), string(domain.SortByTitle)),
+			mcplib.Description("Sort field"),
+		),
 		mcplib.WithBoolean("desc", mcplib.Description("Sort descending")),
 		mcplib.WithNumber("limit", mcplib.Description("Max results (1-100, default 20)")),
 		mcplib.WithNumber("offset", mcplib.Description("Pagination offset")),
@@ -262,16 +278,12 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 	for _, c := range req.GetStringSlice("categories", nil) {
 		f.Categories = append(f.Categories, domain.Category(c))
 	}
-	sort := domain.SortField(req.GetString("sort", string(domain.SortByUpdated)))
-	limit := req.GetInt("limit", 20)
-	offset := req.GetInt("offset", 0)
-
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
 		Filter: f,
-		Sort:   sort,
+		Sort:   domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
 		Desc:   req.GetBool("desc", false),
-		Limit:  limit,
-		Offset: offset,
+		Limit:  req.GetInt("limit", 20),
+		Offset: req.GetInt("offset", 0),
 	})
 	if err != nil {
 		return toolErr(err), nil
@@ -292,8 +304,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	limit := req.GetInt("limit", 10)
-	results, err := h.svc.Search(ctx, text, domain.Filter{AllowedScopes: allowedScopes}, limit)
+	results, err := h.svc.Search(ctx, text, domain.Filter{AllowedScopes: allowedScopes}, req.GetInt("limit", 10))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -314,8 +325,6 @@ func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*m
 	return jsonResult(stats)
 }
 
-// --- helpers ---
-
 func jsonResult(v any) (*mcplib.CallToolResult, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -325,30 +334,21 @@ func jsonResult(v any) (*mcplib.CallToolResult, error) {
 }
 
 func toolErr(err error) *mcplib.CallToolResult {
-	// Surface sentinel errors with structured codes.
-	var msg string
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		msg = "not_found: " + err.Error()
+		return mcplib.NewToolResultError("not_found: " + err.Error())
 	case errors.Is(err, domain.ErrConflict):
-		msg = "conflict: " + err.Error()
+		return mcplib.NewToolResultError("conflict: " + err.Error())
 	default:
-		msg = err.Error()
+		return mcplib.NewToolResultError(err.Error())
 	}
-	return mcplib.NewToolResultError(msg)
 }
 
 // toArchivePath replaces the first path segment with "archives".
 func toArchivePath(path string) (string, error) {
-	idx := -1
-	for i, c := range path {
-		if c == '/' {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
+	_, rest, ok := strings.Cut(path, "/")
+	if !ok {
 		return "", fmt.Errorf("path has no directory segment: %q", path)
 	}
-	return "archives" + path[idx:], nil
+	return "archives/" + rest, nil
 }

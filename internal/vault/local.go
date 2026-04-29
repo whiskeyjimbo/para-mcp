@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,13 +21,11 @@ import (
 // errInternal is returned when AllowedScopes is nil (programmer error).
 var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
-// errConflict and errNotFound alias domain sentinels so callers can errors.Is them.
 var (
 	errConflict = domain.ErrConflict
 	errNotFound = domain.ErrNotFound
 )
 
-// LocalVault implements domain.Vault over a local filesystem.
 type LocalVault struct {
 	scope string
 	root  string
@@ -43,8 +40,6 @@ type LocalVault struct {
 }
 
 // New creates a LocalVault rooted at root with the given scope.
-// It probes filesystem case-sensitivity, scans for existing notes, and
-// starts the BM25 index writer goroutine.
 func New(scope, root string, idxCfg index.Config) (*LocalVault, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create vault root: %w", err)
@@ -98,9 +93,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 	var summary domain.NoteSummary
 	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
 		absPath := filepath.Join(v.root, np.Storage)
-		if _, err := os.Stat(absPath); err == nil {
-			return errConflict
-		}
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 			return err
 		}
@@ -115,8 +107,21 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(absPath, data, 0o644); err != nil {
+		// O_EXCL makes the existence check atomic, eliminating the TOCTOU race.
+		f, err := os.OpenFile(absPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err != nil {
+			if os.IsExist(err) {
+				return errConflict
+			}
 			return err
+		}
+		_, werr := f.Write(data)
+		cerr := f.Close()
+		if werr != nil {
+			return werr
+		}
+		if cerr != nil {
+			return cerr
 		}
 		note, err := v.readNote(np.Storage)
 		if err != nil {
@@ -266,7 +271,7 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 }
 
 // Query returns notes matching the filter, sorted and paginated.
-func (v *LocalVault) Query(_ context.Context, q QueryRequest) (domain.QueryResult, error) {
+func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
 	if err := checkAllowedScopes(q.Filter.AllowedScopes, v.scope); err != nil {
 		if errors.Is(err, errDenied) {
 			return domain.QueryResult{ScopesAttempted: []domain.ScopeID{v.scope}, ScopesSucceeded: []domain.ScopeID{v.scope}}, nil
@@ -315,7 +320,7 @@ func (v *LocalVault) Query(_ context.Context, q QueryRequest) (domain.QueryResul
 }
 
 // Search returns notes ranked by BM25 relevance.
-func (v *LocalVault) Search(_ context.Context, text string, filter Filter, limit int) ([]domain.RankedNote, error) {
+func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
 	if err := checkAllowedScopes(filter.AllowedScopes, v.scope); err != nil {
 		if errors.Is(err, errDenied) {
 			return nil, nil
@@ -348,7 +353,7 @@ func (v *LocalVault) Search(_ context.Context, text string, filter Filter, limit
 
 // Backlinks returns notes that link to ref. Stub for Phase 1 (outgoing-links
 // index is built in Phase 2).
-func (v *LocalVault) Backlinks(_ context.Context, _ domain.NoteRef, filter Filter) ([]domain.NoteSummary, error) {
+func (v *LocalVault) Backlinks(_ context.Context, _ domain.NoteRef, filter domain.Filter) ([]domain.NoteSummary, error) {
 	if filter.AllowedScopes == nil {
 		return nil, errInternal
 	}
@@ -378,8 +383,6 @@ func (v *LocalVault) Health(_ context.Context) (domain.VaultHealth, error) {
 	}
 	return h, nil
 }
-
-// --- internal helpers ---
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {
 	return domain.Normalize(v.root, path, v.caps.CaseSensitive)
@@ -445,22 +448,27 @@ func (v *LocalVault) scanVault() error {
 		if err != nil {
 			return nil // skip unrecognized paths
 		}
-		note, err := v.readNote(np.Storage)
-		if err != nil {
-			return nil
-		}
-		if domain.GetNoteID(note.FrontMatter) == "" {
-			id := domain.DeriveNoteID(np.Storage, note.ETag)
-			domain.SetNoteID(&note.FrontMatter, id)
-			if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
-				_ = os.WriteFile(filepath.Join(v.root, np.Storage), data, 0o644)
-			}
-		}
-		s := v.noteToSummary(note)
-		v.notes[np.IndexKey] = s
-		v.idx.Add(summaryToDoc(s, note.Body))
+		v.indexNote(path, np)
 		return nil
 	})
+}
+
+// indexNote reads absPath, ensures it has a NoteID, persists if needed, then
+// upserts into the in-memory index. Safe to call from multiple goroutines.
+func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
+	note, err := v.readNote(np.Storage)
+	if err != nil {
+		return
+	}
+	if domain.GetNoteID(note.FrontMatter) == "" {
+		domain.SetNoteID(&note.FrontMatter, domain.DeriveNoteID(np.Storage, note.ETag))
+		if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
+			_ = os.WriteFile(absPath, data, 0o644)
+		}
+	}
+	s := v.noteToSummary(note)
+	v.upsertNoteLocked(np.IndexKey, s)
+	v.idx.Add(summaryToDoc(s, note.Body))
 }
 
 func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
@@ -493,7 +501,7 @@ func checkAllowedScopes(allowed []domain.ScopeID, scope domain.ScopeID) error {
 	return errDenied
 }
 
-func applyFilter(notes []domain.NoteSummary, f Filter) []domain.NoteSummary {
+func applyFilter(notes []domain.NoteSummary, f domain.Filter) []domain.NoteSummary {
 	out := notes[:0:0]
 	for _, n := range notes {
 		if matchesFilter(n, f) {
@@ -503,7 +511,7 @@ func applyFilter(notes []domain.NoteSummary, f Filter) []domain.NoteSummary {
 	return out
 }
 
-func matchesFilter(n domain.NoteSummary, f Filter) bool {
+func matchesFilter(n domain.NoteSummary, f domain.Filter) bool {
 	if len(f.Categories) > 0 {
 		found := slices.Contains(f.Categories, n.Category)
 		if !found {
@@ -559,20 +567,18 @@ func hasTag(tags []string, want string) bool {
 }
 
 func sortSummaries(notes []domain.NoteSummary, field domain.SortField, desc bool) {
-	sort.SliceStable(notes, func(i, j int) bool {
-		var less bool
+	slices.SortStableFunc(notes, func(a, b domain.NoteSummary) int {
+		var cmp int
 		switch field {
 		case domain.SortByTitle:
-			less = notes[i].Title < notes[j].Title
-		case domain.SortByCreated:
-			less = notes[i].UpdatedAt.Before(notes[j].UpdatedAt) // CreatedAt not in summary yet
-		default: // SortByUpdated
-			less = notes[i].UpdatedAt.Before(notes[j].UpdatedAt)
+			cmp = strings.Compare(a.Title, b.Title)
+		default: // SortByUpdated, SortByCreated (CreatedAt not yet in summary)
+			cmp = a.UpdatedAt.Compare(b.UpdatedAt)
 		}
 		if desc {
-			return !less
+			return -cmp
 		}
-		return less
+		return cmp
 	})
 }
 
@@ -660,9 +666,3 @@ func probeCaseSensitivity(root string) bool {
 	// On case-insensitive FS the upper-cased probe resolves to the same file.
 	return os.IsNotExist(err)
 }
-
-// Filter is an alias here so local.go can use the domain type directly.
-type Filter = domain.Filter
-
-// QueryRequest is an alias here so local.go can use the domain type directly.
-type QueryRequest = domain.QueryRequest

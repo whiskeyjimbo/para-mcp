@@ -14,13 +14,11 @@ import (
 	"github.com/whiskeyjimbo/paras/domain"
 )
 
-// defaultRescanInterval is how often the vault does a full reconciliation walk.
 const defaultRescanInterval = 60 * time.Second
 
 // renamePairWindow is how long we wait to pair a REMOVE with a CREATE (rename).
 const renamePairWindow = 50 * time.Millisecond
 
-// conflictPatterns matches cloud-sync conflict/transient files to ignore.
 var conflictPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i) \(.*conflicted copy.*\)`), // Dropbox
 	regexp.MustCompile(`(?i)\.sync-conflict-`),         // Syncthing
@@ -32,7 +30,6 @@ var conflictPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)desktop\.ini$`),            // Windows
 }
 
-// isConflictFile returns true if the filename matches a cloud-sync conflict pattern.
 func isConflictFile(name string) bool {
 	for _, re := range conflictPatterns {
 		if re.MatchString(name) {
@@ -42,7 +39,6 @@ func isConflictFile(name string) bool {
 	return false
 }
 
-// watcher wraps fsnotify and manages the periodic rescan for a LocalVault.
 type watcher struct {
 	vault         *LocalVault
 	fw            *fsnotify.Watcher
@@ -50,7 +46,7 @@ type watcher struct {
 	done          chan struct{}
 	wg            sync.WaitGroup
 	syncConflicts atomic.Int64
-	watcherStatus atomic.Value // string: "ok" | "limit_exceeded" | "disabled"
+	watcherStatus atomic.Value // string: "ok" | "limit_exceeded"
 
 	// pending removes for rename-pair debounce: path -> deadline
 	pendingMu sync.Mutex
@@ -72,7 +68,6 @@ func newWatcher(v *LocalVault) *watcher {
 func (w *watcher) start() {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
-		// ENOSPC or similar — fall back to rescan-only.
 		slog.Warn("fsnotify unavailable, falling back to rescan-only", "err", err)
 		w.watcherStatus.Store("limit_exceeded")
 		w.startRescanOnly()
@@ -111,7 +106,6 @@ func (w *watcher) close() {
 	w.wg.Wait()
 }
 
-// addDirs recursively adds all directories under root to the fsnotify watcher.
 func (w *watcher) addDirs(fw *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -131,7 +125,8 @@ func (w *watcher) loop() {
 		case <-w.done:
 			return
 		case <-w.ticker.C:
-			w.vault.scanVault() //nolint:errcheck
+			// Run in a separate goroutine so a slow scan doesn't block event handling.
+			go w.vault.scanVault() //nolint:errcheck
 		case event, ok := <-w.fw.Events:
 			if !ok {
 				return
@@ -164,10 +159,8 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 
 	if isConflictFile(base) {
 		w.syncConflicts.Add(1)
-		// If a conflict file was removed, re-index its canonical sibling.
 		if event.Has(fsnotify.Remove) {
-			canonical := resolveCanonicalSibling(name)
-			if canonical != "" {
+			if canonical := resolveCanonicalSibling(name); canonical != "" {
 				w.reindexFile(canonical)
 			}
 		}
@@ -205,27 +198,30 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 		w.reindexFile(name)
 
 	case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
-		// Queue for rename-pair window.
 		w.pendingMu.Lock()
+		_, alreadyPending := w.pending[name]
 		w.pending[name] = time.Now().Add(renamePairWindow)
 		w.pendingMu.Unlock()
-		// Fire a timer to flush if no paired CREATE arrives.
-		time.AfterFunc(renamePairWindow, func() {
-			select {
-			case <-w.done:
-				return
-			default:
-			}
-			w.pendingMu.Lock()
-			_, stillPending := w.pending[name]
-			if stillPending {
-				delete(w.pending, name)
-			}
-			w.pendingMu.Unlock()
-			if stillPending {
-				w.removeFromIndex(name)
-			}
-		})
+		// Only spawn one AfterFunc per path; if a timer is already running it will
+		// find the updated deadline and handle it.
+		if !alreadyPending {
+			time.AfterFunc(renamePairWindow, func() {
+				select {
+				case <-w.done:
+					return
+				default:
+				}
+				w.pendingMu.Lock()
+				_, stillPending := w.pending[name]
+				if stillPending {
+					delete(w.pending, name)
+				}
+				w.pendingMu.Unlock()
+				if stillPending {
+					w.removeFromIndex(name)
+				}
+			})
+		}
 	}
 }
 
@@ -237,25 +233,11 @@ func (w *watcher) reindexFile(absPath string) {
 	if err != nil {
 		return
 	}
-	rel = filepath.ToSlash(rel)
-	np, err := domain.Normalize(w.vault.root, rel, w.vault.caps.CaseSensitive)
+	np, err := domain.Normalize(w.vault.root, filepath.ToSlash(rel), w.vault.caps.CaseSensitive)
 	if err != nil {
 		return
 	}
-	note, err := w.vault.readNote(np.Storage)
-	if err != nil {
-		return
-	}
-	if domain.GetNoteID(note.FrontMatter) == "" {
-		id := domain.DeriveNoteID(np.Storage, note.ETag)
-		domain.SetNoteID(&note.FrontMatter, id)
-		if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
-			os.WriteFile(absPath, data, 0o644) //nolint:errcheck
-		}
-	}
-	s := w.vault.noteToSummary(note)
-	w.vault.upsertNoteLocked(np.IndexKey, s)
-	w.vault.idx.Add(summaryToDoc(s, note.Body))
+	w.vault.indexNote(absPath, np)
 }
 
 func (w *watcher) removeFromIndex(absPath string) {
@@ -266,8 +248,7 @@ func (w *watcher) removeFromIndex(absPath string) {
 	if err != nil {
 		return
 	}
-	rel = filepath.ToSlash(rel)
-	np, err := domain.Normalize(w.vault.root, rel, w.vault.caps.CaseSensitive)
+	np, err := domain.Normalize(w.vault.root, filepath.ToSlash(rel), w.vault.caps.CaseSensitive)
 	if err != nil {
 		return
 	}
@@ -286,8 +267,7 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 	if err != nil {
 		return
 	}
-	oldRel = filepath.ToSlash(oldRel)
-	oldNP, err := domain.Normalize(w.vault.root, oldRel, w.vault.caps.CaseSensitive)
+	oldNP, err := domain.Normalize(w.vault.root, filepath.ToSlash(oldRel), w.vault.caps.CaseSensitive)
 	if err != nil {
 		w.reindexFile(newAbs)
 		return
@@ -297,8 +277,7 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 	if err != nil {
 		return
 	}
-	newRel = filepath.ToSlash(newRel)
-	newNP, err := domain.Normalize(w.vault.root, newRel, w.vault.caps.CaseSensitive)
+	newNP, err := domain.Normalize(w.vault.root, filepath.ToSlash(newRel), w.vault.caps.CaseSensitive)
 	if err != nil {
 		w.removeFromIndex(oldAbs)
 		return
@@ -320,22 +299,20 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 	w.vault.idx.Add(summaryToDoc(s, note.Body))
 }
 
-// isSameBase returns true if the two paths have the same filename, used as a
-// heuristic to pair REMOVE+CREATE events from atomic saves (e.g., editor temp files).
+// isSameBase is a heuristic to pair REMOVE+CREATE events from atomic saves —
+// editors often write to a temp file then rename to the target.
 func isSameBase(old, new string) bool {
 	return strings.EqualFold(filepath.Base(old), filepath.Base(new))
 }
 
-// resolveCanonicalSibling guesses the canonical filename by stripping known
-// conflict suffixes. Returns "" if no transformation is possible.
+// resolveCanonicalSibling returns empty string if no conflict suffix is recognized.
 func resolveCanonicalSibling(conflictPath string) string {
 	dir := filepath.Dir(conflictPath)
 	base := filepath.Base(conflictPath)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
 	for _, re := range conflictPatterns {
-		cleaned := re.ReplaceAllString(stem, "")
-		cleaned = strings.TrimSpace(cleaned)
+		cleaned := strings.TrimSpace(re.ReplaceAllString(stem, ""))
 		if cleaned != stem && cleaned != "" {
 			return filepath.Join(dir, cleaned+ext)
 		}
