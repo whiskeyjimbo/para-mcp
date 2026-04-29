@@ -22,11 +22,11 @@ import (
 // errInternal is returned when AllowedScopes is nil (programmer error).
 var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
-// errConflict is returned when an ETag precondition fails.
-var errConflict = errors.New("conflict: note has been modified")
-
-// errNotFound is returned when a note does not exist.
-var errNotFound = errors.New("not found")
+// errConflict and errNotFound alias domain sentinels so callers can errors.Is them.
+var (
+	errConflict = domain.ErrConflict
+	errNotFound = domain.ErrNotFound
+)
 
 // LocalVault implements domain.Vault over a local filesystem.
 type LocalVault struct {

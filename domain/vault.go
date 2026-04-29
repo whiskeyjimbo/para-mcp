@@ -2,7 +2,14 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+// Sentinel errors returned by Vault implementations.
+var (
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict: note has been modified")
 )
 
 // SearchMode selects the retrieval strategy.
