@@ -104,6 +104,9 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
 		in.FrontMatter.Tags = normalizeTags(in.FrontMatter.Tags)
 		in.FrontMatter.Status = normalizeStatus(in.FrontMatter.Status)
+		if domain.GetNoteID(in.FrontMatter) == "" {
+			domain.SetNoteID(&in.FrontMatter, domain.MintNoteID())
+		}
 		data, err := formatNote(in.FrontMatter, in.Body)
 		if err != nil {
 			return err
@@ -438,6 +441,13 @@ func (v *LocalVault) scanVault() error {
 		note, err := v.readNote(np.Storage)
 		if err != nil {
 			return nil
+		}
+		if domain.GetNoteID(note.FrontMatter) == "" {
+			id := domain.DeriveNoteID(np.Storage, note.ETag)
+			domain.SetNoteID(&note.FrontMatter, id)
+			if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
+				_ = os.WriteFile(filepath.Join(v.root, np.Storage), data, 0o644)
+			}
 		}
 		s := v.noteToSummary(note)
 		v.notes[np.IndexKey] = s
