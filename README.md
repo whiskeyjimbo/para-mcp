@@ -20,13 +20,13 @@ cd paras
 go build -o paras ./cmd/paras
 ```
 
-Requires Go 1.26.2+.
+Requires Go 1.26+.
 
 ---
 
-## Claude Desktop Integration
+## MCP Integration
 
-Add paras to your MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Add paras to your MCP config:
 
 ```json
 {
