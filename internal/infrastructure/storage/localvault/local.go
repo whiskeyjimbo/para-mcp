@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,10 +21,11 @@ import (
 type Option func(*vaultConfig)
 
 type vaultConfig struct {
-	indexOpts []index.Option
-	ftsIndex  index.FTSIndex
-	templates map[domain.Category]domain.CategoryTemplate
-	clock     func() time.Time
+	indexOpts        []index.Option
+	ftsIndex         index.FTSIndex
+	templates        map[domain.Category]domain.CategoryTemplate
+	clock            func() time.Time
+	conflictPatterns []*regexp.Regexp
 }
 
 // WithIndexOptions passes options through to the default BM25 index.
@@ -47,6 +49,12 @@ func WithClock(fn func() time.Time) Option {
 	return func(c *vaultConfig) { c.clock = fn }
 }
 
+// WithConflictPatterns overrides the set of filename patterns the watcher
+// treats as sync-conflict or OS-metadata files (default: DefaultConflictPatterns).
+func WithConflictPatterns(patterns []*regexp.Regexp) Option {
+	return func(c *vaultConfig) { c.conflictPatterns = patterns }
+}
+
 // LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
 	scope     string
@@ -66,8 +74,9 @@ type LocalVault struct {
 // New creates a LocalVault rooted at root with the given scope.
 func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	cfg := vaultConfig{
-		templates: domain.DefaultTemplates,
-		clock:     time.Now,
+		templates:        domain.DefaultTemplates,
+		clock:            time.Now,
+		conflictPatterns: DefaultConflictPatterns,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -98,7 +107,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if err := v.scanVault(); err != nil {
 		return nil, fmt.Errorf("scan vault: %w", err)
 	}
-	v.w = newWatcher(v)
+	v.w = newWatcher(v, cfg.conflictPatterns)
 	v.w.start()
 	return v, nil
 }

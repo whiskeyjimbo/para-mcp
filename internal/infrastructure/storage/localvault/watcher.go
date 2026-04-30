@@ -16,7 +16,9 @@ import (
 const defaultRescanInterval = 60 * time.Second
 const renamePairWindow = 50 * time.Millisecond
 
-var conflictPatterns = []*regexp.Regexp{
+// DefaultConflictPatterns is the default set of filename patterns treated as
+// sync-conflict or OS-metadata files that should be ignored by the watcher.
+var DefaultConflictPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i) \(.*conflicted copy.*\)`),
 	regexp.MustCompile(`(?i)\.sync-conflict-`),
 	regexp.MustCompile(`(?i) \(Google Docs\)`),
@@ -25,15 +27,6 @@ var conflictPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\.DS_Store$`),
 	regexp.MustCompile(`(?i)\.dropbox$`),
 	regexp.MustCompile(`(?i)desktop\.ini$`),
-}
-
-func isConflictFile(name string) bool {
-	for _, re := range conflictPatterns {
-		if re.MatchString(name) {
-			return true
-		}
-	}
-	return false
 }
 
 // VaultIndexer is the narrow interface the watcher needs from LocalVault.
@@ -46,26 +39,37 @@ type VaultIndexer interface {
 }
 
 type watcher struct {
-	v             VaultIndexer
-	fw            *fsnotify.Watcher
-	ticker        *time.Ticker
-	done          chan struct{}
-	wg            sync.WaitGroup
-	syncConflicts atomic.Int64
-	watcherStatus atomic.Value
-	rescanActive  atomic.Bool
+	v                VaultIndexer
+	fw               *fsnotify.Watcher
+	ticker           *time.Ticker
+	done             chan struct{}
+	wg               sync.WaitGroup
+	syncConflicts    atomic.Int64
+	watcherStatus    atomic.Value
+	rescanActive     atomic.Bool
+	conflictPatterns []*regexp.Regexp
 
 	renames *renamePairTracker
 }
 
-func newWatcher(v VaultIndexer) *watcher {
+func newWatcher(v VaultIndexer, conflictPatterns []*regexp.Regexp) *watcher {
 	w := &watcher{
-		v:       v,
-		done:    make(chan struct{}),
-		renames: newRenamePairTracker(renamePairWindow),
+		v:                v,
+		done:             make(chan struct{}),
+		renames:          newRenamePairTracker(renamePairWindow),
+		conflictPatterns: conflictPatterns,
 	}
 	w.watcherStatus.Store("ok")
 	return w
+}
+
+func (w *watcher) isConflictFile(name string) bool {
+	for _, re := range w.conflictPatterns {
+		if re.MatchString(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *watcher) start() {
@@ -164,10 +168,10 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 	name := event.Name
 	base := filepath.Base(name)
 
-	if isConflictFile(base) {
+	if w.isConflictFile(base) {
 		w.syncConflicts.Add(1)
 		if event.Has(fsnotify.Remove) {
-			if canonical := resolveCanonicalSibling(name); canonical != "" {
+			if canonical := w.resolveCanonicalSibling(name); canonical != "" {
 				w.reindexFile(canonical)
 			}
 		}
@@ -223,12 +227,12 @@ func isSameBase(old, new string) bool {
 	return strings.EqualFold(filepath.Base(old), filepath.Base(new))
 }
 
-func resolveCanonicalSibling(conflictPath string) string {
+func (w *watcher) resolveCanonicalSibling(conflictPath string) string {
 	dir := filepath.Dir(conflictPath)
 	base := filepath.Base(conflictPath)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
-	for _, re := range conflictPatterns {
+	for _, re := range w.conflictPatterns {
 		cleaned := strings.TrimSpace(re.ReplaceAllString(stem, ""))
 		if cleaned != stem && cleaned != "" {
 			return filepath.Join(dir, cleaned+ext)
