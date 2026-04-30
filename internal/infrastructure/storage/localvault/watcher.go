@@ -47,7 +47,7 @@ type watcher struct {
 	syncConflicts    atomic.Int64
 	watcherStatus    atomic.Value
 	rescanActive     atomic.Bool
-	conflictPatterns []*regexp.Regexp
+	conflicts        *ConflictDetector
 	rescanInterval   time.Duration
 	renamePairWindow time.Duration
 
@@ -61,21 +61,12 @@ func newWatcher(v VaultIndexer, log *slog.Logger, root string, conflictPatterns 
 		log:              log,
 		done:             make(chan struct{}),
 		renames:          newRenamePairTracker(renamePairWin),
-		conflictPatterns: conflictPatterns,
+		conflicts:        newConflictDetector(conflictPatterns),
 		rescanInterval:   rescanInterval,
 		renamePairWindow: renamePairWin,
 	}
 	w.watcherStatus.Store("ok")
 	return w
-}
-
-func (w *watcher) isConflictFile(name string) bool {
-	for _, re := range w.conflictPatterns {
-		if re.MatchString(name) {
-			return true
-		}
-	}
-	return false
 }
 
 func (w *watcher) start() {
@@ -174,10 +165,10 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 	name := event.Name
 	base := filepath.Base(name)
 
-	if w.isConflictFile(base) {
+	if w.conflicts.IsConflict(base) {
 		w.syncConflicts.Add(1)
 		if event.Has(fsnotify.Remove) {
-			if canonical := w.resolveCanonicalSibling(name); canonical != "" {
+			if canonical := w.conflicts.ResolveCanonical(name); canonical != "" {
 				w.reindexFile(canonical)
 			}
 		}
@@ -231,18 +222,4 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 
 func isSameBase(old, new string) bool {
 	return strings.EqualFold(filepath.Base(old), filepath.Base(new))
-}
-
-func (w *watcher) resolveCanonicalSibling(conflictPath string) string {
-	dir := filepath.Dir(conflictPath)
-	base := filepath.Base(conflictPath)
-	ext := filepath.Ext(base)
-	stem := strings.TrimSuffix(base, ext)
-	for _, re := range w.conflictPatterns {
-		cleaned := strings.TrimSpace(re.ReplaceAllString(stem, ""))
-		if cleaned != stem && cleaned != "" {
-			return filepath.Join(dir, cleaned+ext)
-		}
-	}
-	return ""
 }
