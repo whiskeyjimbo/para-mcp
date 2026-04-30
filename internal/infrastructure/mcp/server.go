@@ -18,9 +18,9 @@ type NotePort interface {
 	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error)
 	Delete(ctx context.Context, ref domain.NoteRef, soft bool) error
 	Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error)
-	Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error)
-	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error)
-	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.Filter) ([]domain.RankedNote, error)
+	Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error)
+	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error)
+	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error)
 	Stats(ctx context.Context) (domain.VaultStats, error)
 	Health(ctx context.Context) (domain.VaultHealth, error)
 	Rescan(ctx context.Context) error

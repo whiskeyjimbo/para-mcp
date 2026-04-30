@@ -21,8 +21,6 @@ func newTestVault(t *testing.T) *LocalVault {
 	return v
 }
 
-var allowedPersonal = []domain.ScopeID{"personal"}
-
 func TestLocalVault_CreateAndGet(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
@@ -157,8 +155,7 @@ func TestLocalVault_Query_Filter(t *testing.T) {
 
 	result, err := v.Query(ctx, domain.QueryRequest{
 		Filter: domain.Filter{
-			AllowedScopes: allowedPersonal,
-			Status:        "active",
+			Status: "active",
 		},
 	})
 	if err != nil {
@@ -181,7 +178,7 @@ func TestLocalVault_Search(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	results, err := v.Search(ctx, "vpc", domain.Filter{AllowedScopes: allowedPersonal}, 10)
+	results, err := v.Search(ctx, "vpc", domain.Filter{}, 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

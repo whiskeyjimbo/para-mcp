@@ -145,21 +145,21 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	f := domain.Filter{
-		AllowedScopes: h.scopes(ctx),
-		Status:        req.GetString("status", ""),
-		Area:          req.GetString("area", ""),
-		Project:       req.GetString("project", ""),
-		Tags:          req.GetStringSlice("tags", nil),
+		Status:  req.GetString("status", ""),
+		Area:    req.GetString("area", ""),
+		Project: req.GetString("project", ""),
+		Tags:    req.GetStringSlice("tags", nil),
 	}
 	for _, c := range req.GetStringSlice("categories", nil) {
 		f.Categories = append(f.Categories, domain.Category(c))
 	}
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter: f,
-		Sort:   domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
-		Desc:   req.GetBool("desc", false),
-		Limit:  req.GetInt("limit", 20),
-		Offset: req.GetInt("offset", 0),
+		Filter:        f,
+		AllowedScopes: h.scopes(ctx),
+		Sort:          domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
+		Desc:          req.GetBool("desc", false),
+		Limit:         req.GetInt("limit", 20),
+		Offset:        req.GetInt("offset", 0),
 	})
 	if err != nil {
 		return toolErr(err), nil
@@ -172,7 +172,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	results, err := h.svc.Search(ctx, text, domain.Filter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", 10))
+	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", 10))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -196,7 +196,7 @@ func (h *handlers) notesBacklinks(ctx context.Context, req mcplib.CallToolReques
 		return errResult, nil
 	}
 	entries, err := h.svc.Backlinks(ctx, ref, req.GetBool("include_assets", false),
-		domain.Filter{AllowedScopes: h.scopes(ctx)})
+		domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -211,7 +211,7 @@ func (h *handlers) notesRelated(ctx context.Context, req mcplib.CallToolRequest)
 	if errResult != nil {
 		return errResult, nil
 	}
-	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", 10), domain.Filter{AllowedScopes: h.scopes(ctx)})
+	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", 10), domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -228,7 +228,6 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	}
 	cutoff := h.clock().AddDate(0, 0, -days)
 	f := domain.Filter{
-		AllowedScopes: h.scopes(ctx),
 		Status:        req.GetString("status", ""),
 		UpdatedBefore: &cutoff,
 	}
@@ -236,10 +235,11 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 		f.Categories = append(f.Categories, domain.Category(c))
 	}
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter: f,
-		Sort:   domain.SortByUpdated,
-		Desc:   false,
-		Limit:  req.GetInt("limit", 20),
+		Filter:        f,
+		AllowedScopes: h.scopes(ctx),
+		Sort:          domain.SortByUpdated,
+		Desc:          false,
+		Limit:         req.GetInt("limit", 20),
 	})
 	if err != nil {
 		return toolErr(err), nil

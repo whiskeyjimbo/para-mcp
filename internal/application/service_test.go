@@ -20,7 +20,7 @@ func newTestService(t *testing.T) *NoteService {
 
 func TestNoteService_Query_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.Query(context.Background(), domain.QueryRequest{Filter: domain.Filter{AllowedScopes: nil}})
+	_, err := svc.Query(context.Background(), domain.QueryRequest{AllowedScopes: nil})
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}
@@ -30,7 +30,7 @@ func TestNoteService_Query_AllowedScopesEmpty(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	svc.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "x"})
-	result, err := svc.Query(ctx, domain.QueryRequest{Filter: domain.Filter{AllowedScopes: []domain.ScopeID{}}})
+	result, err := svc.Query(ctx, domain.QueryRequest{AllowedScopes: []domain.ScopeID{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestNoteService_Query_AllowedScopesEmpty(t *testing.T) {
 
 func TestNoteService_Search_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.Search(context.Background(), "foo", domain.Filter{AllowedScopes: nil}, 10)
+	_, err := svc.Search(context.Background(), "foo", domain.AuthFilter{AllowedScopes: nil}, 10)
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}
@@ -50,7 +50,7 @@ func TestNoteService_Search_AllowedScopesNil(t *testing.T) {
 func TestNoteService_Backlinks_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
 	ref := domain.NoteRef{Scope: "personal", Path: "projects/foo.md"}
-	_, err := svc.Backlinks(context.Background(), ref, false, domain.Filter{AllowedScopes: nil})
+	_, err := svc.Backlinks(context.Background(), ref, false, domain.AuthFilter{AllowedScopes: nil})
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}

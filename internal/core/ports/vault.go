@@ -38,10 +38,8 @@ type VaultBatcher interface {
 }
 
 // Vault is the full storage port. All storage adapters implement this interface.
-//
-// AllowedScopes contract: every method that accepts a Filter must receive a
-// non-nil AllowedScopes. nil AllowedScopes is a programmer error enforced at
-// the NoteService boundary before the vault is called.
+// AllowedScopes enforcement happens at the NoteService boundary; vault methods
+// receive plain Filter values with no authorization fields.
 type Vault interface {
 	VaultReader
 	VaultWriter

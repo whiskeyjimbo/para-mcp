@@ -47,11 +47,8 @@ type CreateInput struct {
 	Body        string
 }
 
-// Filter narrows query and search results.
-//
-// AllowedScopes is server-resolved and must never come from wire input.
-// nil AllowedScopes is a programmer error and triggers an internal error.
-// Empty []ScopeID{} is the legitimate "deny everything" value.
+// Filter narrows query and search results by note content fields.
+// It carries no authorization state — use AuthFilter at the service boundary.
 type Filter struct {
 	Scopes          []ScopeID
 	Categories      []Category
@@ -64,19 +61,28 @@ type Filter struct {
 	Text            string
 	UpdatedAfter    *time.Time
 	UpdatedBefore   *time.Time
+}
 
-	// Populated server-side from RBAC; never accepted from wire input.
+// AuthFilter pairs a content Filter with the authorization scope list.
+// AllowedScopes is server-resolved and must never be accepted from wire input.
+// nil AllowedScopes is a programmer error caught at the NoteService boundary.
+// Empty []ScopeID{} is the legitimate "deny everything" value.
+type AuthFilter struct {
+	Filter
 	AllowedScopes []ScopeID
 }
 
 // QueryRequest specifies a paginated query over a vault.
+// AllowedScopes is the authorization constraint enforced by NoteService;
+// vault implementations receive a QueryRequest without AllowedScopes.
 type QueryRequest struct {
-	Filter Filter
-	Sort   SortField
-	Desc   bool
-	Limit  int
-	Offset int
-	Cursor string
+	Filter        Filter
+	AllowedScopes []ScopeID
+	Sort          SortField
+	Desc          bool
+	Limit         int
+	Offset        int
+	Cursor        string
 }
 
 // PartialFailure is non-nil when some but not all scopes responded.

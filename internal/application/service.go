@@ -16,7 +16,7 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
-var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil")
+var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil (programmer error)")
 
 // NoteService validates all NoteRef inputs via domain.Normalize before
 // delegating to the underlying Vault port. It is the single entry point for
@@ -127,27 +127,34 @@ func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool)
 }
 
 func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
-	if q.Filter.AllowedScopes == nil {
+	if q.AllowedScopes == nil {
 		return domain.QueryResult{}, errAllowedScopesNil
 	}
-	if !slices.Contains(q.Filter.AllowedScopes, s.vault.Scope()) {
+	if !slices.Contains(q.AllowedScopes, s.vault.Scope()) {
 		return domain.QueryResult{
 			Notes:           []domain.NoteSummary{},
 			ScopesAttempted: []domain.ScopeID{s.vault.Scope()},
 			ScopesSucceeded: []domain.ScopeID{s.vault.Scope()},
 		}, nil
 	}
-	return s.vault.Query(ctx, q)
+	return s.vault.Query(ctx, domain.QueryRequest{
+		Filter: q.Filter,
+		Sort:   q.Sort,
+		Desc:   q.Desc,
+		Limit:  q.Limit,
+		Offset: q.Offset,
+		Cursor: q.Cursor,
+	})
 }
 
-func (s *NoteService) Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
+func (s *NoteService) Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error) {
 	if filter.AllowedScopes == nil {
 		return nil, errAllowedScopesNil
 	}
 	if !slices.Contains(filter.AllowedScopes, s.vault.Scope()) {
 		return nil, nil
 	}
-	return s.vault.Search(ctx, text, filter, limit)
+	return s.vault.Search(ctx, text, filter.Filter, limit)
 }
 
 func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
@@ -162,7 +169,7 @@ func (s *NoteService) Rescan(ctx context.Context) error {
 	return s.vault.Rescan(ctx)
 }
 
-func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
+func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error) {
 	if filter.AllowedScopes == nil {
 		return nil, errAllowedScopesNil
 	}
@@ -174,12 +181,12 @@ func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, include
 		return nil, nil
 	}
 	ref.Path = np.Storage
-	return s.vault.Backlinks(ctx, ref, includeAssets, filter)
+	return s.vault.Backlinks(ctx, ref, includeAssets, filter.Filter)
 }
 
 // Related returns notes scored by tag/area/project overlap with ref.
 // Score = 1 per shared tag + 2 if same area + 2 if same project.
-func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.Filter) ([]domain.RankedNote, error) {
+func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return nil, err
@@ -189,7 +196,7 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter, Limit: s.relatedScanLimit})
+	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter.Filter, Limit: s.relatedScanLimit})
 	if err != nil {
 		return nil, err
 	}
