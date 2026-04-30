@@ -62,19 +62,24 @@ func HasTag(tags []string, want string) bool {
 	return false
 }
 
+// summaryComparators maps SortField values to comparator functions.
+// Adding a new sort field is an additive change: register it here.
+var summaryComparators = map[SortField]func(a, b NoteSummary) int{
+	SortByTitle:   func(a, b NoteSummary) int { return strings.Compare(a.Title, b.Title) },
+	SortByUpdated: func(a, b NoteSummary) int { return a.UpdatedAt.Compare(b.UpdatedAt) },
+}
+
 // SortSummaries sorts notes in-place by field; desc reverses the order.
+// Unknown fields fall back to SortByUpdated.
 func SortSummaries(notes []NoteSummary, field SortField, desc bool) {
+	cmp, ok := summaryComparators[field]
+	if !ok {
+		cmp = summaryComparators[SortByUpdated]
+	}
 	slices.SortStableFunc(notes, func(a, b NoteSummary) int {
-		var cmp int
-		switch field {
-		case SortByTitle:
-			cmp = strings.Compare(a.Title, b.Title)
-		default:
-			cmp = a.UpdatedAt.Compare(b.UpdatedAt)
-		}
 		if desc {
-			return -cmp
+			return -cmp(a, b)
 		}
-		return cmp
+		return cmp(a, b)
 	})
 }
