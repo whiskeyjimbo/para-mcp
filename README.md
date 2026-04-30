@@ -183,30 +183,13 @@ flowchart TD
         D --- H[fsnotify Watcher]
     end
 
-    subgraph domain ["core/domain  (no external deps)"]
+    subgraph domain ["core/domain"]
         I[Note · Filter · MutationResult\nNoteRef · ETag · PARA categories]
     end
 
     C -.->|depends on| I
     D -.->|depends on| I
 ```
-
-### Layer Dependencies
-
-```mermaid
-graph LR
-    MCP["infrastructure/mcp"] --> App["application"]
-    App --> Ports["core/ports"]
-    App --> Domain["core/domain"]
-    Vault["infrastructure/localvault"] --> Ports
-    Vault --> Domain
-    Ports --> Domain
-
-    style Domain fill:#1e3a5f,color:#fff
-    style Ports fill:#1e3a5f,color:#fff
-```
-
-Domain and ports have no infrastructure dependencies. Infrastructure depends inward -- never the reverse.
 
 ---
 
