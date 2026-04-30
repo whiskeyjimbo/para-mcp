@@ -171,9 +171,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
 		in.FrontMatter.Tags = domain.NormalizeTags(in.FrontMatter.Tags)
 		in.FrontMatter.Status = domain.NormalizeStatus(in.FrontMatter.Status)
-		if domain.GetNoteID(in.FrontMatter) == "" {
-			domain.SetNoteID(&in.FrontMatter, mintNoteID())
-		}
 		data, err := formatNote(in.FrontMatter, in.Body)
 		if err != nil {
 			return err

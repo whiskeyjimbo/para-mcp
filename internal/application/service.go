@@ -5,10 +5,13 @@ package application
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
@@ -21,6 +24,7 @@ var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil")
 type NoteService struct {
 	vault     ports.Vault
 	templates map[domain.Category]domain.CategoryTemplate
+	idMinter  func() string
 }
 
 // Option configures a NoteService.
@@ -31,9 +35,18 @@ func WithTemplates(t map[domain.Category]domain.CategoryTemplate) Option {
 	return func(s *NoteService) { s.templates = t }
 }
 
+// WithIDMinter overrides the note ID generator (default: ULID).
+func WithIDMinter(fn func() string) Option {
+	return func(s *NoteService) { s.idMinter = fn }
+}
+
+func defaultIDMinter() string {
+	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
+}
+
 // NewService wraps a Vault with NoteRef validation.
 func NewService(v ports.Vault, opts ...Option) *NoteService {
-	s := &NoteService{vault: v, templates: domain.DefaultTemplates}
+	s := &NoteService{vault: v, templates: domain.DefaultTemplates, idMinter: defaultIDMinter}
 	for _, o := range opts {
 		o(s)
 	}
@@ -63,6 +76,9 @@ func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain
 				in.FrontMatter.Tags = append(in.FrontMatter.Tags, tmpl.Tags...)
 			}
 		}
+	}
+	if domain.GetNoteID(in.FrontMatter) == "" {
+		domain.SetNoteID(&in.FrontMatter, s.idMinter())
 	}
 	return s.vault.Create(ctx, in)
 }
