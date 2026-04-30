@@ -178,8 +178,8 @@ func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 	return s.vault.Stats(ctx)
 }
 
-func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error) {
-	ok, err := s.checkScopes(allowedScopes)
+func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, filter domain.AuthFilter) (domain.QueryResult, error) {
+	ok, err := s.checkScopes(filter.AllowedScopes)
 	if err != nil {
 		return domain.QueryResult{}, err
 	}
@@ -193,7 +193,7 @@ func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.C
 			domain.WithUpdatedBefore(cutoff),
 			domain.WithCategories(categories...),
 		),
-		AllowedScopes: allowedScopes,
+		AllowedScopes: filter.AllowedScopes,
 		Sort:          domain.SortByUpdated,
 		Desc:          false,
 		Limit:         limit,
@@ -246,8 +246,8 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	return domain.RankRelated(note, result.Notes, np.Storage, limit), nil
 }
 
-func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	ok, err := s.checkScopes(allowedScopes)
+func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, filter domain.AuthFilter) (domain.BatchResult, error) {
+	ok, err := s.checkScopes(filter.AllowedScopes)
 	if err != nil {
 		return domain.BatchResult{}, err
 	}
@@ -257,8 +257,8 @@ func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInp
 	return s.vault.CreateBatch(ctx, inputs)
 }
 
-func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	ok, err := s.checkScopes(allowedScopes)
+func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, filter domain.AuthFilter) (domain.BatchResult, error) {
+	ok, err := s.checkScopes(filter.AllowedScopes)
 	if err != nil {
 		return domain.BatchResult{}, err
 	}
@@ -268,8 +268,8 @@ func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchU
 	return s.vault.UpdateBodyBatch(ctx, items)
 }
 
-func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	ok, err := s.checkScopes(allowedScopes)
+func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, filter domain.AuthFilter) (domain.BatchResult, error) {
+	ok, err := s.checkScopes(filter.AllowedScopes)
 	if err != nil {
 		return domain.BatchResult{}, err
 	}

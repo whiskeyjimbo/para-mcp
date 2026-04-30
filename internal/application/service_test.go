@@ -58,7 +58,7 @@ func TestNoteService_Backlinks_AllowedScopesNil(t *testing.T) {
 
 func TestNoteService_CreateBatch_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.CreateBatch(context.Background(), []domain.CreateInput{{Path: "projects/x.md"}}, nil)
+	_, err := svc.CreateBatch(context.Background(), []domain.CreateInput{{Path: "projects/x.md"}}, domain.AuthFilter{AllowedScopes: nil})
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}
@@ -66,7 +66,7 @@ func TestNoteService_CreateBatch_AllowedScopesNil(t *testing.T) {
 
 func TestNoteService_CreateBatch_DeniedScope(t *testing.T) {
 	svc := newTestService(t)
-	result, err := svc.CreateBatch(context.Background(), []domain.CreateInput{{Path: "projects/x.md"}}, []domain.ScopeID{})
+	result, err := svc.CreateBatch(context.Background(), []domain.CreateInput{{Path: "projects/x.md"}}, domain.AuthFilter{AllowedScopes: []domain.ScopeID{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNoteService_CreateBatch_DeniedScope(t *testing.T) {
 
 func TestNoteService_UpdateBodyBatch_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.UpdateBodyBatch(context.Background(), []domain.BatchUpdateBodyInput{{Path: "projects/x.md"}}, nil)
+	_, err := svc.UpdateBodyBatch(context.Background(), []domain.BatchUpdateBodyInput{{Path: "projects/x.md"}}, domain.AuthFilter{AllowedScopes: nil})
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}
@@ -85,7 +85,7 @@ func TestNoteService_UpdateBodyBatch_AllowedScopesNil(t *testing.T) {
 
 func TestNoteService_PatchFrontMatterBatch_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.PatchFrontMatterBatch(context.Background(), []domain.BatchPatchFrontMatterInput{{Path: "projects/x.md", Fields: map[string]any{"status": "done"}}}, nil)
+	_, err := svc.PatchFrontMatterBatch(context.Background(), []domain.BatchPatchFrontMatterInput{{Path: "projects/x.md", Fields: map[string]any{"status": "done"}}}, domain.AuthFilter{AllowedScopes: nil})
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}

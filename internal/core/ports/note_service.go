@@ -24,7 +24,7 @@ type NoteReader interface {
 	Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error)
 	Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error)
 	Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error)
-	Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error)
+	Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, filter domain.AuthFilter) (domain.QueryResult, error)
 	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error)
 	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error)
 	Stats(ctx context.Context) (domain.VaultStats, error)
@@ -43,12 +43,12 @@ type NoteWriter interface {
 }
 
 // NoteBatcher is the batch-mutation slice of the NoteService port.
-// allowedScopes enforces the same vault-scope gate as Query and Search.
-// nil allowedScopes is a programmer error; use []ScopeID{} to deny all.
+// filter.AllowedScopes enforces the same vault-scope gate as Query and Search.
+// nil AllowedScopes is a programmer error; use []ScopeID{} to deny all.
 type NoteBatcher interface {
-	CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
-	UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
-	PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
+	CreateBatch(ctx context.Context, inputs []domain.CreateInput, filter domain.AuthFilter) (domain.BatchResult, error)
+	UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, filter domain.AuthFilter) (domain.BatchResult, error)
+	PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, filter domain.AuthFilter) (domain.BatchResult, error)
 }
 
 // NoteService is the full application service interface consumed by transport

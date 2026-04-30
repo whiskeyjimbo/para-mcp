@@ -235,7 +235,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	for _, c := range req.GetStringSlice("categories", nil) {
 		cats = append(cats, domain.Category(c))
 	}
-	result, err := h.svc.Stale(ctx, days, cats, req.GetString("status", ""), req.GetInt("limit", defaultListLimit), h.scopes.Scopes(ctx))
+	result, err := h.svc.Stale(ctx, days, cats, req.GetString("status", ""), req.GetInt("limit", defaultListLimit), domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -292,7 +292,7 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 			stringVal(obj, "body"),
 		))
 	}
-	result, err := h.svc.CreateBatch(ctx, inputs, h.scopes.Scopes(ctx))
+	result, err := h.svc.CreateBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -324,7 +324,7 @@ func (h *handlers) notesUpdateBatch(ctx context.Context, req mcplib.CallToolRequ
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.UpdateBodyBatch(ctx, inputs, h.scopes.Scopes(ctx))
+	result, err := h.svc.UpdateBodyBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -360,7 +360,7 @@ func (h *handlers) notesPatchFrontMatterBatch(ctx context.Context, req mcplib.Ca
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, h.scopes.Scopes(ctx))
+	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
