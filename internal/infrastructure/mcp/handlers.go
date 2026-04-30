@@ -12,6 +12,11 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
+const (
+	defaultListLimit   = 20
+	defaultSearchLimit = 10
+)
+
 type handlers struct {
 	svc    ports.NoteService
 	scopes ScopesFunc
@@ -160,7 +165,7 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 		AllowedScopes: h.scopes(ctx),
 		Sort:          domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
 		Desc:          req.GetBool("desc", false),
-		Limit:         req.GetInt("limit", 20),
+		Limit:         req.GetInt("limit", defaultListLimit),
 		Offset:        req.GetInt("offset", 0),
 	})
 	if err != nil {
@@ -174,7 +179,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", 10))
+	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", defaultSearchLimit))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -213,7 +218,7 @@ func (h *handlers) notesRelated(ctx context.Context, req mcplib.CallToolRequest)
 	if errResult != nil {
 		return errResult, nil
 	}
-	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", 10), domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
+	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", defaultSearchLimit), domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -242,7 +247,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 		AllowedScopes: h.scopes(ctx),
 		Sort:          domain.SortByUpdated,
 		Desc:          false,
-		Limit:         req.GetInt("limit", 20),
+		Limit:         req.GetInt("limit", defaultListLimit),
 	})
 	if err != nil {
 		return toolErr(err), nil
