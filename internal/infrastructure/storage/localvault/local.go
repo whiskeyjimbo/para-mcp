@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +26,7 @@ type vaultConfig struct {
 	indexOpts        []index.Option
 	ftsIndex         ports.FTSIndex
 	executor         actor.Executor
+	log              *slog.Logger
 	clock            func() time.Time
 	conflictPatterns []*regexp.Regexp
 	actorOpts        []actor.Option
@@ -63,6 +65,11 @@ func WithActorOptions(opts ...actor.Option) Option {
 // WithActorExecutor replaces the default actor pool with a custom Executor.
 func WithActorExecutor(e actor.Executor) Option {
 	return func(c *vaultConfig) { c.executor = e }
+}
+
+// WithLogger sets the logger used by the watcher (default: slog.Default()).
+func WithLogger(l *slog.Logger) Option {
+	return func(c *vaultConfig) { c.log = l }
 }
 
 // WithRescanInterval sets how often the watcher triggers a full vault rescan
@@ -115,6 +122,10 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if exec == nil {
 		exec = actor.New(cfg.actorOpts...)
 	}
+	log := cfg.log
+	if log == nil {
+		log = slog.Default()
+	}
 	v := &LocalVault{
 		scope:  scope,
 		root:   root,
@@ -132,7 +143,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if err := v.scanVault(); err != nil {
 		return nil, fmt.Errorf("scan vault: %w", err)
 	}
-	v.w = newWatcher(v, root, cfg.conflictPatterns, cfg.rescanInterval, cfg.renamePairWindow)
+	v.w = newWatcher(v, log, root, cfg.conflictPatterns, cfg.rescanInterval, cfg.renamePairWindow)
 	v.w.start()
 	return v, nil
 }

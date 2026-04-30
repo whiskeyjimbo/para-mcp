@@ -39,6 +39,7 @@ type VaultIndexer interface {
 type watcher struct {
 	v                VaultIndexer
 	root             string
+	log              *slog.Logger
 	fw               *fsnotify.Watcher
 	ticker           *time.Ticker
 	done             chan struct{}
@@ -53,10 +54,11 @@ type watcher struct {
 	renames *renamePairTracker
 }
 
-func newWatcher(v VaultIndexer, root string, conflictPatterns []*regexp.Regexp, rescanInterval, renamePairWin time.Duration) *watcher {
+func newWatcher(v VaultIndexer, log *slog.Logger, root string, conflictPatterns []*regexp.Regexp, rescanInterval, renamePairWin time.Duration) *watcher {
 	w := &watcher{
 		v:                v,
 		root:             root,
+		log:              log,
 		done:             make(chan struct{}),
 		renames:          newRenamePairTracker(renamePairWin),
 		conflictPatterns: conflictPatterns,
@@ -79,14 +81,14 @@ func (w *watcher) isConflictFile(name string) bool {
 func (w *watcher) start() {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
-		slog.Warn("fsnotify unavailable, falling back to rescan-only", "err", err)
+		w.log.Warn("fsnotify unavailable, falling back to rescan-only", "err", err)
 		w.watcherStatus.Store("limit_exceeded")
 		w.startRescanOnly()
 		return
 	}
 
 	if err := w.addDirs(fw, w.root); err != nil {
-		slog.Warn("fsnotify watch failed, falling back to rescan-only", "err", err)
+		w.log.Warn("fsnotify watch failed, falling back to rescan-only", "err", err)
 		fw.Close()
 		w.watcherStatus.Store("limit_exceeded")
 		w.startRescanOnly()
@@ -151,7 +153,7 @@ func (w *watcher) loop() {
 			if !ok {
 				return
 			}
-			slog.Warn("fsnotify error", "err", err)
+			w.log.Warn("fsnotify error", "err", err)
 		}
 	}
 }
