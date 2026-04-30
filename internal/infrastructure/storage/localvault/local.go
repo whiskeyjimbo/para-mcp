@@ -3,12 +3,10 @@ package localvault
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,8 +15,6 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/actor"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
-
-var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
 // LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
@@ -108,8 +104,8 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		}
 		in.FrontMatter.CreatedAt = time.Now().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
-		in.FrontMatter.Tags = normalizeTags(in.FrontMatter.Tags)
-		in.FrontMatter.Status = normalizeStatus(in.FrontMatter.Status)
+		in.FrontMatter.Tags = domain.NormalizeTags(in.FrontMatter.Tags)
+		in.FrontMatter.Status = domain.NormalizeStatus(in.FrontMatter.Status)
 		if domain.GetNoteID(in.FrontMatter) == "" {
 			domain.SetNoteID(&in.FrontMatter, domain.MintNoteID())
 		}
@@ -193,7 +189,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 		if ifMatch != "" && note.ETag != ifMatch {
 			return domain.ErrConflict
 		}
-		applyFrontMatterPatch(&note.FrontMatter, fields)
+		domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
 		note.FrontMatter.UpdatedAt = time.Now().UTC()
 		note.ETag = domain.ComputeETag(note.FrontMatter, note.Body)
 		data, err := formatNote(note.FrontMatter, note.Body)
@@ -284,13 +280,6 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 }
 
 func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
-	if err := checkAllowedScopes(q.Filter.AllowedScopes, v.scope); err != nil {
-		if errors.Is(err, errDenied) {
-			return domain.QueryResult{ScopesAttempted: []domain.ScopeID{v.scope}, ScopesSucceeded: []domain.ScopeID{v.scope}}, nil
-		}
-		return domain.QueryResult{}, err
-	}
-
 	v.mu.RLock()
 	all := make([]domain.NoteSummary, 0, len(v.notes))
 	for _, s := range v.notes {
@@ -298,8 +287,8 @@ func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.Que
 	}
 	v.mu.RUnlock()
 
-	filtered := applyFilter(all, q.Filter)
-	sortSummaries(filtered, q.Sort, q.Desc)
+	filtered := domain.ApplyFilter(all, q.Filter)
+	domain.SortSummaries(filtered, q.Sort, q.Desc)
 
 	total := len(filtered)
 	limit := q.Limit
@@ -333,12 +322,6 @@ func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.Que
 }
 
 func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
-	if err := checkAllowedScopes(filter.AllowedScopes, v.scope); err != nil {
-		if errors.Is(err, errDenied) {
-			return nil, nil
-		}
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -352,7 +335,7 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 		if !ok {
 			continue
 		}
-		if !matchesFilter(s, filter) {
+		if !domain.MatchesFilter(s, filter) {
 			continue
 		}
 		results = append(results, domain.RankedNote{Summary: s, Score: h.Score})
@@ -364,15 +347,6 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 }
 
 func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
-	if filter.AllowedScopes == nil {
-		return nil, errInternal
-	}
-	if err := checkAllowedScopes(filter.AllowedScopes, v.scope); err != nil {
-		if errors.Is(err, errDenied) {
-			return nil, nil
-		}
-		return nil, err
-	}
 	keys := linkMatchKeys(ref.Path)
 	seen := make(map[string]bool)
 	var entries []domain.BacklinkEntry
@@ -392,7 +366,7 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 			if !ok {
 				continue
 			}
-			if !matchesFilter(s, filter) {
+			if !domain.MatchesFilter(s, filter) {
 				continue
 			}
 			entries = append(entries, domain.BacklinkEntry{Summary: s, IsAsset: src.isAsset})
@@ -670,88 +644,6 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	return collisions
 }
 
-var errDenied = errors.New("denied")
-
-func checkAllowedScopes(allowed []domain.ScopeID, scope domain.ScopeID) error {
-	if allowed == nil {
-		return errInternal
-	}
-	if slices.Contains(allowed, scope) {
-		return nil
-	}
-	return errDenied
-}
-
-func applyFilter(notes []domain.NoteSummary, f domain.Filter) []domain.NoteSummary {
-	out := notes[:0:0]
-	for _, n := range notes {
-		if matchesFilter(n, f) {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-func matchesFilter(n domain.NoteSummary, f domain.Filter) bool {
-	isArchive := n.Category == domain.Archives
-	inRequestedCategories := len(f.Categories) > 0 && slices.Contains(f.Categories, n.Category)
-	if isArchive && !f.IncludeArchives && !inRequestedCategories {
-		return false
-	}
-	if len(f.Categories) > 0 && !inRequestedCategories && !(isArchive && f.IncludeArchives) {
-		return false
-	}
-	if f.Status != "" && !strings.EqualFold(n.Status, f.Status) {
-		return false
-	}
-	if f.Area != "" && !strings.EqualFold(n.Area, f.Area) {
-		return false
-	}
-	if f.Project != "" && !strings.EqualFold(n.Project, f.Project) {
-		return false
-	}
-	for _, tag := range f.Tags {
-		if !hasTag(n.Tags, tag) {
-			return false
-		}
-	}
-	if len(f.AnyTags) > 0 && !slices.ContainsFunc(f.AnyTags, func(tag string) bool { return hasTag(n.Tags, tag) }) {
-		return false
-	}
-	if f.UpdatedAfter != nil && !n.UpdatedAt.After(*f.UpdatedAfter) {
-		return false
-	}
-	if f.UpdatedBefore != nil && !n.UpdatedAt.Before(*f.UpdatedBefore) {
-		return false
-	}
-	return true
-}
-
-func hasTag(tags []string, want string) bool {
-	for _, t := range tags {
-		if strings.EqualFold(t, want) {
-			return true
-		}
-	}
-	return false
-}
-
-func sortSummaries(notes []domain.NoteSummary, field domain.SortField, desc bool) {
-	slices.SortStableFunc(notes, func(a, b domain.NoteSummary) int {
-		var cmp int
-		switch field {
-		case domain.SortByTitle:
-			cmp = strings.Compare(a.Title, b.Title)
-		default:
-			cmp = a.UpdatedAt.Compare(b.UpdatedAt)
-		}
-		if desc {
-			return -cmp
-		}
-		return cmp
-	})
-}
-
 func summaryToDoc(s domain.NoteSummary, body string) index.Doc {
 	return index.Doc{
 		Ref:       s.Ref,
@@ -759,65 +651,6 @@ func summaryToDoc(s domain.NoteSummary, body string) index.Doc {
 		Body:      body,
 		UpdatedAt: s.UpdatedAt,
 	}
-}
-
-func applyFrontMatterPatch(fm *domain.FrontMatter, fields map[string]any) {
-	for k, v := range fields {
-		switch k {
-		case "title":
-			if s, ok := v.(string); ok {
-				fm.Title = s
-			}
-		case "status":
-			if s, ok := v.(string); ok {
-				fm.Status = normalizeStatus(s)
-			}
-		case "area":
-			if s, ok := v.(string); ok {
-				fm.Area = s
-			}
-		case "project":
-			if s, ok := v.(string); ok {
-				fm.Project = s
-			}
-		case "tags":
-			switch tv := v.(type) {
-			case []string:
-				fm.Tags = normalizeTags(tv)
-			case []any:
-				tags := make([]string, 0, len(tv))
-				for _, t := range tv {
-					if s, ok := t.(string); ok {
-						tags = append(tags, s)
-					}
-				}
-				fm.Tags = normalizeTags(tags)
-			}
-		default:
-			if fm.Extra == nil {
-				fm.Extra = make(map[string]any)
-			}
-			fm.Extra[k] = v
-		}
-	}
-}
-
-func normalizeTags(tags []string) []string {
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if n, err := domain.NormalizeTag(t); err == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-func normalizeStatus(s string) string {
-	n, err := domain.NormalizeTag(s)
-	if err != nil {
-		return s
-	}
-	return n
 }
 
 func isMDFile(path string) bool {

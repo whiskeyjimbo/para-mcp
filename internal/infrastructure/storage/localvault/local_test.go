@@ -141,28 +141,6 @@ func TestLocalVault_Delete_Hard(t *testing.T) {
 	}
 }
 
-func TestLocalVault_Query_AllowedScopesNil(t *testing.T) {
-	v := newTestVault(t)
-	ctx := context.Background()
-	_, err := v.Query(ctx, domain.QueryRequest{Filter: domain.Filter{AllowedScopes: nil}})
-	if err == nil {
-		t.Fatal("nil AllowedScopes should return internal error")
-	}
-}
-
-func TestLocalVault_Query_AllowedScopesEmpty(t *testing.T) {
-	v := newTestVault(t)
-	ctx := context.Background()
-	v.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "x"})
-	result, err := v.Query(ctx, domain.QueryRequest{Filter: domain.Filter{AllowedScopes: []domain.ScopeID{}}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Notes) != 0 {
-		t.Fatal("empty AllowedScopes should deny all results")
-	}
-}
-
 func TestLocalVault_Query_Filter(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
@@ -187,15 +165,6 @@ func TestLocalVault_Query_Filter(t *testing.T) {
 	}
 	if len(result.Notes) != 1 || result.Notes[0].Ref.Path != "projects/a.md" {
 		t.Errorf("expected 1 active note, got %d: %v", len(result.Notes), result.Notes)
-	}
-}
-
-func TestLocalVault_Search_AllowedScopesNil(t *testing.T) {
-	v := newTestVault(t)
-	ctx := context.Background()
-	_, err := v.Search(ctx, "foo", domain.Filter{AllowedScopes: nil}, 10)
-	if err == nil {
-		t.Fatal("nil AllowedScopes should return internal error")
 	}
 }
 

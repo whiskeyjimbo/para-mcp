@@ -65,6 +65,16 @@ func IndexKey(path string, caseSensitive bool) string {
 	return strings.ToLower(path)
 }
 
+// ArchivePath returns the archives/ equivalent of path by replacing its
+// first path segment with "archives".
+func ArchivePath(path string) (string, error) {
+	_, rest, ok := strings.Cut(path, "/")
+	if !ok {
+		return "", fmt.Errorf("path has no directory segment: %q", path)
+	}
+	return "archives/" + rest, nil
+}
+
 func checkSymlinks(vaultRoot, path string) error {
 	abs := filepath.Join(vaultRoot, path)
 	real, err := filepath.EvalSymlinks(abs)

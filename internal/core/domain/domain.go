@@ -136,6 +136,26 @@ type NoteSummary struct {
 	IndexState IndexState
 }
 
+// NormalizeTags applies NormalizeTag to each element, dropping invalid ones.
+func NormalizeTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if n, err := NormalizeTag(t); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// NormalizeStatus applies tag normalization rules to a status string.
+// Returns s unchanged if it fails normalization.
+func NormalizeStatus(s string) string {
+	if n, err := NormalizeTag(s); err == nil {
+		return n
+	}
+	return s
+}
+
 // NormalizeTag applies canonical tag normalization at every write boundary.
 func NormalizeTag(s string) (string, error) {
 	s = strings.TrimSpace(s)
@@ -199,6 +219,68 @@ var DefaultTemplates = map[Category]CategoryTemplate{
 	Areas:     {},
 	Resources: {},
 	Archives:  {Status: "archived"},
+}
+
+// ApplyFrontMatterPatch applies a partial update to fm from a fields map.
+func ApplyFrontMatterPatch(fm *FrontMatter, fields map[string]any) {
+	for k, v := range fields {
+		switch k {
+		case "title":
+			if s, ok := v.(string); ok {
+				fm.Title = s
+			}
+		case "status":
+			if s, ok := v.(string); ok {
+				fm.Status = NormalizeStatus(s)
+			}
+		case "area":
+			if s, ok := v.(string); ok {
+				fm.Area = s
+			}
+		case "project":
+			if s, ok := v.(string); ok {
+				fm.Project = s
+			}
+		case "tags":
+			switch tv := v.(type) {
+			case []string:
+				fm.Tags = NormalizeTags(tv)
+			case []any:
+				tags := make([]string, 0, len(tv))
+				for _, t := range tv {
+					if s, ok := t.(string); ok {
+						tags = append(tags, s)
+					}
+				}
+				fm.Tags = NormalizeTags(tags)
+			}
+		default:
+			if fm.Extra == nil {
+				fm.Extra = make(map[string]any)
+			}
+			fm.Extra[k] = v
+		}
+	}
+}
+
+// ScoreRelatedness scores candidate against target: 1pt per shared tag,
+// 2pt for same area, 2pt for same project.
+func ScoreRelatedness(target Note, candidate NoteSummary) float64 {
+	var score float64
+	for _, t := range target.FrontMatter.Tags {
+		for _, ct := range candidate.Tags {
+			if strings.EqualFold(t, ct) {
+				score++
+			}
+		}
+	}
+	if target.FrontMatter.Area != "" && strings.EqualFold(target.FrontMatter.Area, candidate.Area) {
+		score += 2
+	}
+	if target.FrontMatter.Project != "" && strings.EqualFold(target.FrontMatter.Project, candidate.Project) {
+		score += 2
+	}
+	return score
 }
 
 // NormalizeScopeID applies canonical scope ID normalization.

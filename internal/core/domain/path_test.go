@@ -176,3 +176,33 @@ func TestNormalize_NonExistentPathSkipsSymlinkCheck(t *testing.T) {
 		t.Fatalf("non-existent path should not error: %v", err)
 	}
 }
+
+func TestArchivePath(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"projects/foo.md", "archives/foo.md", false},
+		{"areas/work/notes.md", "archives/work/notes.md", false},
+		{"resources/aws.md", "archives/aws.md", false},
+		{"archives/old.md", "archives/old.md", false},
+		{"noslash", "", true},
+	}
+	for _, c := range cases {
+		got, err := ArchivePath(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ArchivePath(%q): expected error", c.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ArchivePath(%q): unexpected error: %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ArchivePath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

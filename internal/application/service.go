@@ -5,13 +5,15 @@ package application
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
+
+var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil")
 
 // NoteService validates all NoteRef inputs via domain.Normalize before
 // delegating to the underlying Vault port. It is the single entry point for
@@ -79,10 +81,26 @@ func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool)
 }
 
 func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
+	if q.Filter.AllowedScopes == nil {
+		return domain.QueryResult{}, errAllowedScopesNil
+	}
+	if !slices.Contains(q.Filter.AllowedScopes, s.vault.Scope()) {
+		return domain.QueryResult{
+			Notes:           []domain.NoteSummary{},
+			ScopesAttempted: []domain.ScopeID{s.vault.Scope()},
+			ScopesSucceeded: []domain.ScopeID{s.vault.Scope()},
+		}, nil
+	}
 	return s.vault.Query(ctx, q)
 }
 
 func (s *NoteService) Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
+	if filter.AllowedScopes == nil {
+		return nil, errAllowedScopesNil
+	}
+	if !slices.Contains(filter.AllowedScopes, s.vault.Scope()) {
+		return nil, nil
+	}
 	return s.vault.Search(ctx, text, filter, limit)
 }
 
@@ -99,9 +117,15 @@ func (s *NoteService) Rescan(ctx context.Context) error {
 }
 
 func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
+	if filter.AllowedScopes == nil {
+		return nil, errAllowedScopesNil
+	}
 	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return nil, err
+	}
+	if !slices.Contains(filter.AllowedScopes, s.vault.Scope()) {
+		return nil, nil
 	}
 	ref.Path = np.Storage
 	return s.vault.Backlinks(ctx, ref, includeAssets, filter)
@@ -128,7 +152,7 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 		if n.Ref.Path == ref.Path {
 			continue
 		}
-		score := relatedScore(note, n)
+		score := domain.ScoreRelatedness(note, n)
 		if score > 0 {
 			ranked = append(ranked, domain.RankedNote{Summary: n, Score: score})
 		}
@@ -140,24 +164,6 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 		ranked = ranked[:limit]
 	}
 	return ranked, nil
-}
-
-func relatedScore(target domain.Note, candidate domain.NoteSummary) float64 {
-	var score float64
-	for _, t := range target.FrontMatter.Tags {
-		for _, ct := range candidate.Tags {
-			if strings.EqualFold(t, ct) {
-				score++
-			}
-		}
-	}
-	if target.FrontMatter.Area != "" && strings.EqualFold(target.FrontMatter.Area, candidate.Area) {
-		score += 2
-	}
-	if target.FrontMatter.Project != "" && strings.EqualFold(target.FrontMatter.Project, candidate.Project) {
-		score += 2
-	}
-	return score
 }
 
 func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {

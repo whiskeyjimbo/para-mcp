@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
@@ -227,7 +226,7 @@ func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) 
 	if errResult != nil {
 		return errResult, nil
 	}
-	newPath, err := toArchivePath(ref.Path)
+	newPath, err := domain.ArchivePath(ref.Path)
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
@@ -621,12 +620,4 @@ func toolErr(err error) *mcplib.CallToolResult {
 	default:
 		return mcplib.NewToolResultError(err.Error())
 	}
-}
-
-func toArchivePath(path string) (string, error) {
-	_, rest, ok := strings.Cut(path, "/")
-	if !ok {
-		return "", fmt.Errorf("path has no directory segment: %q", path)
-	}
-	return "archives/" + rest, nil
 }

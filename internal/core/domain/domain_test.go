@@ -90,6 +90,68 @@ func TestNormalizeTag_CollapseRuns(t *testing.T) {
 	}
 }
 
+func TestNormalizeTags(t *testing.T) {
+	got := NormalizeTags([]string{"AWS", "#go", "  infra  ", ""})
+	want := []string{"aws", "go", "infra"}
+	if len(got) != len(want) {
+		t.Fatalf("NormalizeTags: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("NormalizeTags[%d]: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestNormalizeStatus(t *testing.T) {
+	if got := NormalizeStatus("Active"); got != "active" {
+		t.Errorf("got %q, want %q", got, "active")
+	}
+	if got := NormalizeStatus(""); got != "" {
+		t.Errorf("empty status should pass through unchanged, got %q", got)
+	}
+}
+
+func TestApplyFrontMatterPatch(t *testing.T) {
+	fm := FrontMatter{Title: "old", Status: "active", Tags: []string{"go"}}
+	ApplyFrontMatterPatch(&fm, map[string]any{
+		"title":  "new",
+		"status": "DONE",
+		"tags":   []string{"AWS", "infra"},
+		"custom": "value",
+	})
+	if fm.Title != "new" {
+		t.Errorf("title: got %q", fm.Title)
+	}
+	if fm.Status != "done" {
+		t.Errorf("status: got %q", fm.Status)
+	}
+	if len(fm.Tags) != 2 || fm.Tags[0] != "aws" || fm.Tags[1] != "infra" {
+		t.Errorf("tags: got %v", fm.Tags)
+	}
+	if fm.Extra["custom"] != "value" {
+		t.Errorf("extra: got %v", fm.Extra)
+	}
+}
+
+func TestScoreRelatedness(t *testing.T) {
+	target := Note{FrontMatter: FrontMatter{Tags: []string{"go", "aws"}, Area: "platform", Project: "infra"}}
+	cases := []struct {
+		candidate NoteSummary
+		want      float64
+	}{
+		{NoteSummary{Tags: []string{"go", "aws"}, Area: "platform", Project: "infra"}, 6},
+		{NoteSummary{Tags: []string{"go"}, Area: "platform"}, 3},
+		{NoteSummary{Tags: []string{"python"}}, 0},
+		{NoteSummary{}, 0},
+	}
+	for _, c := range cases {
+		if got := ScoreRelatedness(target, c.candidate); got != c.want {
+			t.Errorf("ScoreRelatedness: got %v, want %v (candidate %+v)", got, c.want, c.candidate)
+		}
+	}
+}
+
 func TestNormalizeScopeID(t *testing.T) {
 	cases := []struct {
 		in      string
