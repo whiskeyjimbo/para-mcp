@@ -22,9 +22,10 @@ var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil")
 // delegating to the underlying Vault port. It is the single entry point for
 // MCP tool handlers — handlers must never call a Vault directly.
 type NoteService struct {
-	vault     ports.Vault
-	templates map[domain.Category]domain.CategoryTemplate
-	idMinter  func() string
+	vault            ports.Vault
+	templates        map[domain.Category]domain.CategoryTemplate
+	idMinter         func() string
+	relatedScanLimit int
 }
 
 // Option configures a NoteService.
@@ -40,13 +41,19 @@ func WithIDMinter(fn func() string) Option {
 	return func(s *NoteService) { s.idMinter = fn }
 }
 
+// WithRelatedScanLimit sets the maximum number of notes fetched from the vault
+// when computing related notes (default: 1000).
+func WithRelatedScanLimit(n int) Option {
+	return func(s *NoteService) { s.relatedScanLimit = n }
+}
+
 func defaultIDMinter() string {
 	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
 }
 
 // NewService wraps a Vault with NoteRef validation.
 func NewService(v ports.Vault, opts ...Option) *NoteService {
-	s := &NoteService{vault: v, templates: domain.DefaultTemplates, idMinter: defaultIDMinter}
+	s := &NoteService{vault: v, templates: domain.DefaultTemplates, idMinter: defaultIDMinter, relatedScanLimit: 1000}
 	for _, o := range opts {
 		o(s)
 	}
@@ -182,7 +189,7 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter, Limit: 1000})
+	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter, Limit: s.relatedScanLimit})
 	if err != nil {
 		return nil, err
 	}
