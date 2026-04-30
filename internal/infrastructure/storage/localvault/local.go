@@ -162,12 +162,12 @@ func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
 	return v.readNote(np.Storage)
 }
 
-func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error) {
+func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {
 	np, err := v.normalizePath(in.Path)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
-	var summary domain.NoteSummary
+	var result domain.MutationResult
 	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
 		absPath := filepath.Join(v.root, np.Storage)
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
@@ -200,21 +200,21 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err != nil {
 			return err
 		}
-		summary = v.noteToSummary(note)
+		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
 		links := parseLinks(in.Body)
-		v.upsertWithLinks(np.IndexKey, np.Storage, summary, links)
-		v.idx.Add(summaryToDoc(summary, in.Body))
+		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
+		v.idx.Add(summaryToDoc(result.Summary, in.Body))
 		return nil
 	})
-	return summary, err
+	return result, err
 }
 
-func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string) (domain.NoteSummary, error) {
+func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string) (domain.MutationResult, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
-	var summary domain.NoteSummary
+	var result domain.MutationResult
 	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
 		note, err := v.readNote(np.Storage)
 		if err != nil {
@@ -234,21 +234,21 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 		if err := os.WriteFile(absPath, data, 0o644); err != nil {
 			return err
 		}
-		summary = v.noteToSummary(note)
+		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
 		links := parseLinks(body)
-		v.upsertWithLinks(np.IndexKey, np.Storage, summary, links)
-		v.idx.Add(summaryToDoc(summary, body))
+		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
+		v.idx.Add(summaryToDoc(result.Summary, body))
 		return nil
 	})
-	return summary, err
+	return result, err
 }
 
-func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.NoteSummary, error) {
+func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
-	var summary domain.NoteSummary
+	var result domain.MutationResult
 	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
 		note, err := v.readNote(np.Storage)
 		if err != nil {
@@ -267,24 +267,24 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 		if err := os.WriteFile(filepath.Join(v.root, np.Storage), data, 0o644); err != nil {
 			return err
 		}
-		summary = v.noteToSummary(note)
+		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
 		existingLinks := v.graph.Links(np.Storage)
-		v.upsertWithLinks(np.IndexKey, np.Storage, summary, existingLinks)
+		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, existingLinks)
 		return nil
 	})
-	return summary, err
+	return result, err
 }
 
-func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.NoteSummary, error) {
+func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	nnp, err := v.normalizePath(newPath)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
-	var summary domain.NoteSummary
+	var result domain.MutationResult
 	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
 		note, err := v.readNote(np.Storage)
 		if err != nil {
@@ -301,16 +301,16 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 			return err
 		}
 		note.Ref.Path = nnp.Storage
-		summary = v.noteToSummary(note)
+		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
 		links := parseLinks(note.Body)
-		v.cache.Move(np.IndexKey, nnp.IndexKey, summary)
+		v.cache.Move(np.IndexKey, nnp.IndexKey, result.Summary)
 		v.graph.Remove(np.Storage)
 		v.graph.Upsert(nnp.Storage, links)
 		v.idx.Remove(domain.NoteRef{Scope: v.scope, Path: np.Storage})
-		v.idx.Add(summaryToDoc(summary, note.Body))
+		v.idx.Add(summaryToDoc(result.Summary, note.Body))
 		return nil
 	})
-	return summary, err
+	return result, err
 }
 
 func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
@@ -483,46 +483,47 @@ func (v *LocalVault) countUnrecognized() int {
 }
 
 func (v *LocalVault) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
-	return runBatch(inputs, func(in domain.CreateInput) (string, domain.NoteSummary, error) {
+	return runBatch(inputs, func(in domain.CreateInput) (string, domain.MutationResult, error) {
 		np, err := v.normalizePath(in.Path)
 		if err != nil {
-			return in.Path, domain.NoteSummary{}, err
+			return in.Path, domain.MutationResult{}, err
 		}
-		sum, err := v.Create(ctx, domain.CreateInput{Path: np.Storage, FrontMatter: in.FrontMatter, Body: in.Body})
-		return in.Path, sum, err
+		res, err := v.Create(ctx, domain.CreateInput{Path: np.Storage, FrontMatter: in.FrontMatter, Body: in.Body})
+		return in.Path, res, err
 	}), nil
 }
 
 func (v *LocalVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
-	return runBatch(items, func(it domain.BatchUpdateBodyInput) (string, domain.NoteSummary, error) {
-		sum, err := v.UpdateBody(ctx, it.Path, it.Body, it.IfMatch)
-		return it.Path, sum, err
+	return runBatch(items, func(it domain.BatchUpdateBodyInput) (string, domain.MutationResult, error) {
+		res, err := v.UpdateBody(ctx, it.Path, it.Body, it.IfMatch)
+		return it.Path, res, err
 	}), nil
 }
 
 func (v *LocalVault) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
-	return runBatch(items, func(it domain.BatchPatchFrontMatterInput) (string, domain.NoteSummary, error) {
-		sum, err := v.PatchFrontMatter(ctx, it.Path, it.Fields, it.IfMatch)
-		return it.Path, sum, err
+	return runBatch(items, func(it domain.BatchPatchFrontMatterInput) (string, domain.MutationResult, error) {
+		res, err := v.PatchFrontMatter(ctx, it.Path, it.Fields, it.IfMatch)
+		return it.Path, res, err
 	}), nil
 }
 
-func runBatch[I any](items []I, fn func(I) (path string, sum domain.NoteSummary, err error)) domain.BatchResult {
-	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
+func runBatch[I any](items []I, fn func(I) (path string, res domain.MutationResult, err error)) domain.BatchResult {
+	result := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
 	for i, item := range items {
-		path, sum, err := fn(item)
+		path, res, err := fn(item)
 		r := domain.BatchItemResult{Index: i, Path: path}
 		if err != nil {
 			r.Error = err.Error()
-			res.FailureCount++
+			result.FailureCount++
 		} else {
 			r.OK = true
-			r.Summary = &sum
-			res.SuccessCount++
+			r.Summary = &res.Summary
+			r.ETag = res.ETag
+			result.SuccessCount++
 		}
-		res.Results[i] = r
+		result.Results[i] = r
 	}
-	return res
+	return result
 }
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {
@@ -604,7 +605,6 @@ func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
 		Project:   note.FrontMatter.Project,
 		Category:  cat,
 		UpdatedAt: note.FrontMatter.UpdatedAt,
-		ETag:      note.ETag,
 	}
 }
 

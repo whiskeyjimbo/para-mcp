@@ -57,11 +57,11 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 		},
 		Body: req.GetString("body", ""),
 	}
-	sum, err := h.svc.Create(ctx, in)
+	res, err := h.svc.Create(ctx, in)
 	if err != nil {
 		return toolErr(err), nil
 	}
-	return jsonResult(sum)
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -73,11 +73,11 @@ func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolReques
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	sum, err := h.svc.UpdateBody(ctx, ref, body, req.GetString("if_match", ""))
+	res, err := h.svc.UpdateBody(ctx, ref, body, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
-	return jsonResult(sum)
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -93,11 +93,11 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 	if !ok {
 		return mcplib.NewToolResultError("fields must be an object"), nil
 	}
-	sum, err := h.svc.PatchFrontMatter(ctx, ref, fields, req.GetString("if_match", ""))
+	res, err := h.svc.PatchFrontMatter(ctx, ref, fields, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
-	return jsonResult(sum)
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -109,11 +109,11 @@ func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*m
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	sum, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
+	res, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
-	return jsonResult(sum)
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -125,11 +125,11 @@ func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	sum, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
+	res, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
-	return jsonResult(sum)
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -392,6 +392,17 @@ func stringSliceVal(m map[string]any, key string) []string {
 		return out
 	}
 	return nil
+}
+
+// mutationResult flattens a MutationResult into a single JSON object, keeping
+// all summary fields at the top level alongside the ETag concurrency token.
+type mutationResult struct {
+	domain.NoteSummary
+	ETag string `json:"etag"`
+}
+
+func flatMutation(r domain.MutationResult) mutationResult {
+	return mutationResult{NoteSummary: r.Summary, ETag: r.ETag}
 }
 
 func jsonResult(v any) (*mcplib.CallToolResult, error) {

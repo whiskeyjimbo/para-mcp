@@ -12,10 +12,10 @@ import (
 // NotePort is the application interface consumed by MCP tool handlers.
 type NotePort interface {
 	Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error)
-	Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error)
-	UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.NoteSummary, error)
-	PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.NoteSummary, error)
-	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.NoteSummary, error)
+	Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error)
+	UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.MutationResult, error)
+	PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.MutationResult, error)
+	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error)
 	Delete(ctx context.Context, ref domain.NoteRef, soft bool) error
 	Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error)
 	Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error)

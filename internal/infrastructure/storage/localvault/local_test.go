@@ -27,7 +27,7 @@ func TestLocalVault_CreateAndGet(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	summary, err := v.Create(ctx, domain.CreateInput{
+	res, err := v.Create(ctx, domain.CreateInput{
 		Path:        "projects/hello.md",
 		FrontMatter: domain.FrontMatter{Title: "Hello"},
 		Body:        "body content",
@@ -35,11 +35,11 @@ func TestLocalVault_CreateAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if summary.Title != "Hello" {
-		t.Errorf("Title = %q, want %q", summary.Title, "Hello")
+	if res.Summary.Title != "Hello" {
+		t.Errorf("Title = %q, want %q", res.Summary.Title, "Hello")
 	}
-	if summary.ETag == "" {
-		t.Error("ETag should be set on Create summary")
+	if res.ETag == "" {
+		t.Error("ETag should be set on Create result")
 	}
 
 	note, err := v.Get(ctx, "projects/hello.md")
@@ -49,8 +49,8 @@ func TestLocalVault_CreateAndGet(t *testing.T) {
 	if note.Body != "body content" {
 		t.Errorf("Body = %q", note.Body)
 	}
-	if note.ETag != summary.ETag {
-		t.Errorf("ETag mismatch: %q vs %q", note.ETag, summary.ETag)
+	if note.ETag != res.ETag {
+		t.Errorf("ETag mismatch: %q vs %q", note.ETag, res.ETag)
 	}
 }
 
@@ -58,17 +58,17 @@ func TestLocalVault_UpdateBody_ETag(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	sum, _ := v.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "v1"})
+	res1, _ := v.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "v1"})
 
-	sum2, err := v.UpdateBody(ctx, "projects/x.md", "v2", sum.ETag)
+	res2, err := v.UpdateBody(ctx, "projects/x.md", "v2", res1.ETag)
 	if err != nil {
 		t.Fatalf("UpdateBody: %v", err)
 	}
-	if sum2.ETag == sum.ETag {
+	if res2.ETag == res1.ETag {
 		t.Error("ETag should change after update")
 	}
 
-	_, err = v.UpdateBody(ctx, "projects/x.md", "v3", sum.ETag)
+	_, err = v.UpdateBody(ctx, "projects/x.md", "v3", res1.ETag)
 	if err == nil {
 		t.Fatal("expected conflict error on stale ETag")
 	}
@@ -78,23 +78,23 @@ func TestLocalVault_PatchFrontMatter(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	sum, _ := v.Create(ctx, domain.CreateInput{
+	res1, _ := v.Create(ctx, domain.CreateInput{
 		Path:        "areas/work.md",
 		FrontMatter: domain.FrontMatter{Title: "Work", Status: "active"},
 	})
 
-	sum2, err := v.PatchFrontMatter(ctx, "areas/work.md", map[string]any{
+	res2, err := v.PatchFrontMatter(ctx, "areas/work.md", map[string]any{
 		"status": "done",
 		"title":  "Work Done",
-	}, sum.ETag)
+	}, res1.ETag)
 	if err != nil {
 		t.Fatalf("PatchFrontMatter: %v", err)
 	}
-	if sum2.Status != "done" {
-		t.Errorf("Status = %q, want %q", sum2.Status, "done")
+	if res2.Summary.Status != "done" {
+		t.Errorf("Status = %q, want %q", res2.Summary.Status, "done")
 	}
-	if sum2.Title != "Work Done" {
-		t.Errorf("Title = %q", sum2.Title)
+	if res2.Summary.Title != "Work Done" {
+		t.Errorf("Title = %q", res2.Summary.Title)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestLocalVault_Move(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	sum, _ := v.Create(ctx, domain.CreateInput{Path: "projects/old.md", Body: "content"})
-	_, err := v.Move(ctx, "projects/old.md", "archives/old.md", sum.ETag)
+	res, _ := v.Create(ctx, domain.CreateInput{Path: "projects/old.md", Body: "content"})
+	_, err := v.Move(ctx, "projects/old.md", "archives/old.md", res.ETag)
 	if err != nil {
 		t.Fatalf("Move: %v", err)
 	}
@@ -214,14 +214,14 @@ func TestLocalVault_TagNormalization(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	sum, err := v.Create(ctx, domain.CreateInput{
+	res, err := v.Create(ctx, domain.CreateInput{
 		Path:        "projects/tagged.md",
 		FrontMatter: domain.FrontMatter{Tags: []string{"AWS", "#Cloud", " infra "}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	for _, tag := range sum.Tags {
+	for _, tag := range res.Summary.Tags {
 		if tag != "aws" && tag != "cloud" && tag != "infra" {
 			t.Errorf("tag not normalized: %q", tag)
 		}

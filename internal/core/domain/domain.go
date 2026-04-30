@@ -128,12 +128,17 @@ type NoteSummary struct {
 	Project   string
 	Category  Category
 	UpdatedAt time.Time
-	// ETag populated on summaries from mutation tools; empty on list/query results.
-	ETag string
 
 	// Present only when the vault has Derived/Semantic capability.
 	Derived    *DerivedMetadata
 	IndexState IndexState
+}
+
+// MutationResult is returned by single-note write operations (Create, UpdateBody,
+// PatchFrontMatter, Move). The ETag is the concurrency token for the next write.
+type MutationResult struct {
+	Summary NoteSummary
+	ETag    string
 }
 
 // NormalizeTags applies NormalizeTag to each element, dropping invalid ones.
@@ -197,6 +202,7 @@ type BatchItemResult struct {
 	Path    string
 	OK      bool
 	Summary *NoteSummary
+	ETag    string
 	Error   string
 }
 

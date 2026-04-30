@@ -23,10 +23,10 @@ type VaultReader interface {
 
 // VaultWriter is the mutation slice of the Vault port.
 type VaultWriter interface {
-	Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error)
-	UpdateBody(ctx context.Context, path, body string, ifMatch string) (domain.NoteSummary, error)
-	PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.NoteSummary, error)
-	Move(ctx context.Context, path, newPath string, ifMatch string) (domain.NoteSummary, error)
+	Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error)
+	UpdateBody(ctx context.Context, path, body string, ifMatch string) (domain.MutationResult, error)
+	PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error)
+	Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error)
 	Delete(ctx context.Context, path string, soft bool) error
 }
 

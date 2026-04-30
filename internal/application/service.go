@@ -61,10 +61,10 @@ func (s *NoteService) Get(ctx context.Context, ref domain.NoteRef) (domain.Note,
 	return s.vault.Get(ctx, np.Storage)
 }
 
-func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error) {
+func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {
 	np, err := s.normalizePath(in.Path)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	in.Path = np.Storage
 	if cat, ok := domain.CategoryFromPath(np.Storage); ok {
@@ -83,30 +83,30 @@ func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain
 	return s.vault.Create(ctx, in)
 }
 
-func (s *NoteService) UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.NoteSummary, error) {
+func (s *NoteService) UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.MutationResult, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	return s.vault.UpdateBody(ctx, np.Storage, body, ifMatch)
 }
 
-func (s *NoteService) PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.NoteSummary, error) {
+func (s *NoteService) PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.MutationResult, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	return s.vault.PatchFrontMatter(ctx, np.Storage, fields, ifMatch)
 }
 
-func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.NoteSummary, error) {
+func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	npNew, err := s.normalizePath(newPath)
 	if err != nil {
-		return domain.NoteSummary{}, err
+		return domain.MutationResult{}, err
 	}
 	return s.vault.Move(ctx, np.Storage, npNew.Storage, ifMatch)
 }
