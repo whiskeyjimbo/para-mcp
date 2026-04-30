@@ -126,7 +126,13 @@ func (v *LocalVault) IndexFile(absPath string) {
 	if err != nil {
 		return
 	}
-	v.indexNote(absPath, np)
+	// Run through actor to serialize with concurrent mutations (e.g., Delete).
+	// Without this, indexNote can race with Delete and recreate a deleted file
+	// via os.WriteFile when writing back the derived NoteID.
+	_ = v.actors.Do(context.Background(), v.scope, np.Storage, func() error {
+		v.indexNote(absPath, np)
+		return nil
+	})
 }
 
 // RescanVault re-walks the vault root and rebuilds all indexes.
@@ -644,7 +650,12 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 	if domain.GetNoteID(note.FrontMatter) == "" {
 		domain.SetNoteID(&note.FrontMatter, domain.DeriveNoteID(np.Storage, note.ETag))
 		if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
-			_ = os.WriteFile(absPath, data, 0o644)
+			// Atomic write: write to a sibling tmp file then rename, so concurrent
+			// Get calls never observe a half-written (truncated) file.
+			tmp := absPath + ".para_tmp"
+			if werr := os.WriteFile(tmp, data, 0o644); werr == nil {
+				_ = os.Rename(tmp, absPath)
+			}
 		}
 	}
 	s := v.noteToSummary(note)

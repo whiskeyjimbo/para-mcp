@@ -24,7 +24,7 @@ const (
 	defaultTitleBoost = 2.0
 )
 
-// StemmerKind selects the stemming algorithm.
+// StemmerKind selects a built-in stemming algorithm.
 type StemmerKind string
 
 const (
@@ -32,18 +32,33 @@ const (
 	StemmerNone   StemmerKind = "none"
 )
 
+// StemmerFunc is a function that reduces a token to its stem.
+type StemmerFunc func(word string) string
+
 // Option configures an Index.
 type Option func(*config)
 
 type config struct {
-	stemmer    StemmerKind
+	stemmer    StemmerFunc
 	titleBoost float64
 	stopWords  []string
 }
 
-// WithStemmer sets the stemming algorithm (default: Porter).
+// WithStemmer sets the stemming algorithm by kind (default: Porter).
 func WithStemmer(k StemmerKind) Option {
-	return func(c *config) { c.stemmer = k }
+	return func(c *config) {
+		switch k {
+		case StemmerPorter:
+			c.stemmer = func(w string) string { return english.Stem(w, false) }
+		default:
+			c.stemmer = nil
+		}
+	}
+}
+
+// WithStemmerFunc sets a custom stemming function, overriding any StemmerKind.
+func WithStemmerFunc(fn StemmerFunc) Option {
+	return func(c *config) { c.stemmer = fn }
 }
 
 // WithTitleBoost sets the BM25 title field multiplier (default: 2.0).
@@ -115,7 +130,10 @@ type Index struct {
 
 // New creates and starts a new Index with the given options.
 func New(opts ...Option) *Index {
-	cfg := config{stemmer: StemmerPorter, titleBoost: defaultTitleBoost}
+	cfg := config{
+		stemmer:    func(w string) string { return english.Stem(w, false) },
+		titleBoost: defaultTitleBoost,
+	}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -335,8 +353,8 @@ func (idx *Index) tokenize(text string) []string {
 		if idx.stopWords[f] {
 			continue
 		}
-		if idx.cfg.stemmer == StemmerPorter {
-			f = english.Stem(f, false)
+		if idx.cfg.stemmer != nil {
+			f = idx.cfg.stemmer(f)
 		}
 		if f != "" {
 			out = append(out, f)
