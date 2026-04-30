@@ -29,10 +29,12 @@ type NoteWriter interface {
 }
 
 // NoteBatcher is the batch-mutation slice of the NoteService port.
+// allowedScopes enforces the same vault-scope gate as Query and Search.
+// nil allowedScopes is a programmer error; use []ScopeID{} to deny all.
 type NoteBatcher interface {
-	CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error)
-	UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error)
-	PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error)
+	CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
+	UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
+	PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error)
 }
 
 // NoteService is the full application service interface consumed by transport

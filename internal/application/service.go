@@ -223,15 +223,33 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	return ranked, nil
 }
 
-func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
+func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
+	if allowedScopes == nil {
+		return domain.BatchResult{}, errAllowedScopesNil
+	}
+	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+		return domain.BatchResult{}, nil
+	}
 	return s.vault.CreateBatch(ctx, inputs)
 }
 
-func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
+func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
+	if allowedScopes == nil {
+		return domain.BatchResult{}, errAllowedScopesNil
+	}
+	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+		return domain.BatchResult{}, nil
+	}
 	return s.vault.UpdateBodyBatch(ctx, items)
 }
 
-func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
+func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
+	if allowedScopes == nil {
+		return domain.BatchResult{}, errAllowedScopesNil
+	}
+	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+		return domain.BatchResult{}, nil
+	}
 	return s.vault.PatchFrontMatterBatch(ctx, items)
 }
 

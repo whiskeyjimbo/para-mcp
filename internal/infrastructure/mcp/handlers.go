@@ -301,7 +301,7 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 		}
 		inputs = append(inputs, in)
 	}
-	result, err := h.svc.CreateBatch(ctx, inputs)
+	result, err := h.svc.CreateBatch(ctx, inputs, h.scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -333,7 +333,7 @@ func (h *handlers) notesUpdateBatch(ctx context.Context, req mcplib.CallToolRequ
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.UpdateBodyBatch(ctx, inputs)
+	result, err := h.svc.UpdateBodyBatch(ctx, inputs, h.scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -369,7 +369,7 @@ func (h *handlers) notesPatchFrontMatterBatch(ctx context.Context, req mcplib.Ca
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs)
+	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, h.scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}
