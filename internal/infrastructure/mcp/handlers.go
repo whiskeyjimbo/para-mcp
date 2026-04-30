@@ -144,17 +144,18 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 }
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	f := domain.Filter{
-		Status:  req.GetString("status", ""),
-		Area:    req.GetString("area", ""),
-		Project: req.GetString("project", ""),
-		Tags:    req.GetStringSlice("tags", nil),
-	}
+	cats := make([]domain.Category, 0, len(req.GetStringSlice("categories", nil)))
 	for _, c := range req.GetStringSlice("categories", nil) {
-		f.Categories = append(f.Categories, domain.Category(c))
+		cats = append(cats, domain.Category(c))
 	}
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter:        f,
+		Filter: domain.NewFilter(
+			domain.WithStatus(req.GetString("status", "")),
+			domain.WithArea(req.GetString("area", "")),
+			domain.WithProject(req.GetString("project", "")),
+			domain.WithTags(req.GetStringSlice("tags", nil)...),
+			domain.WithCategories(cats...),
+		),
 		AllowedScopes: h.scopes(ctx),
 		Sort:          domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
 		Desc:          req.GetBool("desc", false),
@@ -227,15 +228,16 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 		return mcplib.NewToolResultError("days must be > 0"), nil
 	}
 	cutoff := h.clock().AddDate(0, 0, -days)
-	f := domain.Filter{
-		Status:        req.GetString("status", ""),
-		UpdatedBefore: &cutoff,
-	}
+	cats := make([]domain.Category, 0, len(req.GetStringSlice("categories", nil)))
 	for _, c := range req.GetStringSlice("categories", nil) {
-		f.Categories = append(f.Categories, domain.Category(c))
+		cats = append(cats, domain.Category(c))
 	}
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter:        f,
+		Filter: domain.NewFilter(
+			domain.WithStatus(req.GetString("status", "")),
+			domain.WithUpdatedBefore(cutoff),
+			domain.WithCategories(cats...),
+		),
 		AllowedScopes: h.scopes(ctx),
 		Sort:          domain.SortByUpdated,
 		Desc:          false,
