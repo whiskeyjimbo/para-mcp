@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -287,6 +289,28 @@ func ScoreRelatedness(target Note, candidate NoteSummary) float64 {
 		score += 2
 	}
 	return score
+}
+
+// RankRelated scores, sorts, and trims candidates relative to target.
+// Notes with zero score or whose path matches excludePath are omitted.
+// If limit <= 0 all non-zero-scored notes are returned.
+func RankRelated(target Note, candidates []NoteSummary, excludePath string, limit int) []RankedNote {
+	var ranked []RankedNote
+	for _, c := range candidates {
+		if c.Ref.Path == excludePath {
+			continue
+		}
+		if score := ScoreRelatedness(target, c); score > 0 {
+			ranked = append(ranked, RankedNote{Summary: c, Score: score})
+		}
+	}
+	slices.SortFunc(ranked, func(a, b RankedNote) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked
 }
 
 // NormalizeScopeID applies canonical scope ID normalization.

@@ -3,7 +3,6 @@
 package application
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -195,7 +194,6 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	if err != nil {
 		return nil, err
 	}
-	ref.Path = np.Storage
 	note, err := s.vault.Get(ctx, np.Storage)
 	if err != nil {
 		return nil, err
@@ -204,23 +202,7 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	if err != nil {
 		return nil, err
 	}
-	var ranked []domain.RankedNote
-	for _, n := range result.Notes {
-		if n.Ref.Path == ref.Path {
-			continue
-		}
-		score := domain.ScoreRelatedness(note, n)
-		if score > 0 {
-			ranked = append(ranked, domain.RankedNote{Summary: n, Score: score})
-		}
-	}
-	slices.SortFunc(ranked, func(a, b domain.RankedNote) int {
-		return cmp.Compare(b.Score, a.Score)
-	})
-	if limit > 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	return ranked, nil
+	return domain.RankRelated(note, result.Notes, np.Storage, limit), nil
 }
 
 func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
