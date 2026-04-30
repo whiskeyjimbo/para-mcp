@@ -383,6 +383,30 @@ def run_tests(c: MCPClient):
         results = parse_json(text)
         check("empty results for unknown term", results is not None and len(results) == 0, str(results))
 
+    section("scope_resolver")
+    # The server wires AllowedScopes from a server-side ScopesFunc, never from
+    # wire input. These tests verify that the resolver is active and correct:
+    # notes in the personal vault are visible, and the scope string supplied
+    # by the caller in NoteRef is validated (must match the vault's scope).
+
+    # Scope field in NoteRef must be "personal" for the single-vault build.
+    resp = c.call("note_get", {"scope": "wrong-scope", "path": "areas/hello.md"})
+    check_err("wrong scope on note_get → error", resp)
+
+    # notes_list returns notes because AllowedScopes = ["personal"] includes the vault.
+    resp = c.call("notes_list", {})
+    is_err, text = check_ok("notes_list succeeds (scopes resolver active)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("notes_list returns non-empty result", data and data.get("Total", 0) > 0, str(data))
+
+    # notes_search returns results because AllowedScopes includes personal vault.
+    resp = c.call("notes_search", {"text": "unique_searchterm_xk9"})
+    is_err, text = check_ok("notes_search succeeds (scopes resolver active)", resp)
+    if not is_err:
+        results = parse_json(text)
+        check("notes_search returns results with personal scope", results is not None, str(results))
+
     section("vault_stats")
     resp = c.call("vault_stats", {})
     is_err, text = check_ok("vault_stats", resp)

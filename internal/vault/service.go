@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/whiskeyjimbo/paras/internal/domain"
 )
@@ -19,7 +20,7 @@ func NewService(v domain.Vault) *NoteService {
 }
 
 func (s *NoteService) Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error) {
-	np, err := s.normalizePath(ref.Path)
+	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return domain.Note{}, err
 	}
@@ -36,7 +37,7 @@ func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain
 }
 
 func (s *NoteService) UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.NoteSummary, error) {
-	np, err := s.normalizePath(ref.Path)
+	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return domain.NoteSummary{}, err
 	}
@@ -44,7 +45,7 @@ func (s *NoteService) UpdateBody(ctx context.Context, ref domain.NoteRef, body, 
 }
 
 func (s *NoteService) PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.NoteSummary, error) {
-	np, err := s.normalizePath(ref.Path)
+	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return domain.NoteSummary{}, err
 	}
@@ -52,7 +53,7 @@ func (s *NoteService) PatchFrontMatter(ctx context.Context, ref domain.NoteRef, 
 }
 
 func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.NoteSummary, error) {
-	np, err := s.normalizePath(ref.Path)
+	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return domain.NoteSummary{}, err
 	}
@@ -64,7 +65,7 @@ func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath stri
 }
 
 func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool) error {
-	np, err := s.normalizePath(ref.Path)
+	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return err
 	}
@@ -81,6 +82,15 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Fil
 
 func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 	return s.vault.Stats(ctx)
+}
+
+// normalizeRef validates the scope against the vault and normalizes the path.
+// In Phase 3, scope routing moves to VaultRegistry; NoteService becomes single-vault.
+func (s *NoteService) normalizeRef(ref domain.NoteRef) (domain.NormalizedPath, error) {
+	if ref.Scope != "" && ref.Scope != string(s.vault.Scope()) {
+		return domain.NormalizedPath{}, fmt.Errorf("%w: scope %q", domain.ErrNotFound, ref.Scope)
+	}
+	return s.normalizePath(ref.Path)
 }
 
 // normalizePath validates a vault-relative path without a symlink check (handler layer concern).
