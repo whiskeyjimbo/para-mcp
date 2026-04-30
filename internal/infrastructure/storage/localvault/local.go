@@ -107,7 +107,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if err := v.scanVault(); err != nil {
 		return nil, fmt.Errorf("scan vault: %w", err)
 	}
-	v.w = newWatcher(v, cfg.conflictPatterns)
+	v.w = newWatcher(v, root, cfg.conflictPatterns)
 	v.w.start()
 	return v, nil
 }
@@ -121,8 +121,6 @@ func (v *LocalVault) Close() {
 
 func (v *LocalVault) Scope() domain.ScopeID             { return v.scope }
 func (v *LocalVault) Capabilities() domain.Capabilities { return v.caps }
-func (v *LocalVault) Root() string                      { return v.root }
-func (v *LocalVault) CaseSensitive() bool               { return v.caps.CaseSensitive }
 
 // IndexFile parses and indexes the note at absPath. No-op for non-markdown files.
 func (v *LocalVault) IndexFile(absPath string) {

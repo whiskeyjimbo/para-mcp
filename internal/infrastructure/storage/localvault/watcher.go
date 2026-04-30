@@ -31,8 +31,6 @@ var DefaultConflictPatterns = []*regexp.Regexp{
 
 // VaultIndexer is the narrow interface the watcher needs from LocalVault.
 type VaultIndexer interface {
-	Root() string
-	CaseSensitive() bool
 	IndexFile(absPath string)
 	RemoveFile(absPath string)
 	RescanVault() error
@@ -40,6 +38,7 @@ type VaultIndexer interface {
 
 type watcher struct {
 	v                VaultIndexer
+	root             string
 	fw               *fsnotify.Watcher
 	ticker           *time.Ticker
 	done             chan struct{}
@@ -52,9 +51,10 @@ type watcher struct {
 	renames *renamePairTracker
 }
 
-func newWatcher(v VaultIndexer, conflictPatterns []*regexp.Regexp) *watcher {
+func newWatcher(v VaultIndexer, root string, conflictPatterns []*regexp.Regexp) *watcher {
 	w := &watcher{
 		v:                v,
+		root:             root,
 		done:             make(chan struct{}),
 		renames:          newRenamePairTracker(renamePairWindow),
 		conflictPatterns: conflictPatterns,
@@ -81,7 +81,7 @@ func (w *watcher) start() {
 		return
 	}
 
-	if err := w.addDirs(fw, w.v.Root()); err != nil {
+	if err := w.addDirs(fw, w.root); err != nil {
 		slog.Warn("fsnotify watch failed, falling back to rescan-only", "err", err)
 		fw.Close()
 		w.watcherStatus.Store("limit_exceeded")
