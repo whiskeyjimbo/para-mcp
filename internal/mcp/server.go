@@ -14,17 +14,31 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/vault"
 )
 
-var allowedScopes = []domain.ScopeID{"personal"}
+// ScopesFunc resolves the permitted scopes for a request.
+// Phase 1: returns a hard-coded single-vault slice.
+// Phase 3: replaced with an RBAC resolver that reads caller identity
+// from ctx and returns only the scopes that caller may access.
+type ScopesFunc func(ctx context.Context) []domain.ScopeID
+
+// personalOnly is the Phase 1 resolver: always permit the personal vault.
+func personalOnly(_ context.Context) []domain.ScopeID {
+	return []domain.ScopeID{"personal"}
+}
 
 // Build constructs and returns an MCPServer wired to svc.
-func Build(svc *vault.NoteService) *mcpserver.MCPServer {
+// scopesFn resolves permitted scopes per request; pass nil to use the
+// default single-vault personal resolver.
+func Build(svc *vault.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
+	if scopesFn == nil {
+		scopesFn = personalOnly
+	}
 	s := mcpserver.NewMCPServer(
 		"paras",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc}
+	h := &handlers{svc: svc, scopes: scopesFn}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -41,7 +55,8 @@ func Build(svc *vault.NoteService) *mcpserver.MCPServer {
 }
 
 type handlers struct {
-	svc *vault.NoteService
+	svc    *vault.NoteService
+	scopes ScopesFunc
 }
 
 func requireNoteRef(req mcplib.CallToolRequest) (domain.NoteRef, *mcplib.CallToolResult) {
@@ -255,7 +270,7 @@ func toolNotesList() mcplib.Tool {
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	f := domain.Filter{
-		AllowedScopes: allowedScopes,
+		AllowedScopes: h.scopes(ctx),
 		Status:        req.GetString("status", ""),
 		Area:          req.GetString("area", ""),
 		Project:       req.GetString("project", ""),
@@ -290,7 +305,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	results, err := h.svc.Search(ctx, text, domain.Filter{AllowedScopes: allowedScopes}, req.GetInt("limit", 10))
+	results, err := h.svc.Search(ctx, text, domain.Filter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", 10))
 	if err != nil {
 		return toolErr(err), nil
 	}
