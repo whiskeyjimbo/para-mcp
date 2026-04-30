@@ -4,6 +4,7 @@ package actor
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -133,10 +134,5 @@ func (p *Pool) create(k key) chan op {
 	return ch
 }
 
-// closedError is the sentinel for calls after Close.
-type closedError struct{}
-
-func (closedError) Error() string { return "actor pool is closed" }
-
 // ErrPoolClosed is returned by Do when called on a closed Pool.
-var ErrPoolClosed error = closedError{}
+var ErrPoolClosed = errors.New("actor pool is closed")

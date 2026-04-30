@@ -151,21 +151,7 @@ func NormalizeTag(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "#")
 	s = strings.ToLower(s)
-	// collapse internal whitespace runs to '-'
-	var b strings.Builder
-	inSpace := false
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			if !inSpace {
-				b.WriteRune('-')
-				inSpace = true
-			}
-		} else {
-			b.WriteRune(r)
-			inSpace = false
-		}
-	}
-	result := b.String()
+	result := strings.Join(strings.FieldsFunc(s, unicode.IsSpace), "-")
 	if result == "" {
 		return "", fmt.Errorf("tag normalizes to empty string")
 	}
