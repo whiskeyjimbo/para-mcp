@@ -17,6 +17,16 @@ import (
 
 var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil (programmer error)")
 
+// checkScopes validates that allowedScopes is non-nil and returns whether
+// the vault's scope is permitted. Returns (false, err) on nil, (false, nil)
+// when the vault scope is not in the allowed set, (true, nil) when it is.
+func (s *NoteService) checkScopes(allowedScopes []domain.ScopeID) (allowed bool, err error) {
+	if allowedScopes == nil {
+		return false, errAllowedScopesNil
+	}
+	return slices.Contains(allowedScopes, s.vault.Scope()), nil
+}
+
 // NoteService validates all NoteRef inputs via domain.Normalize before
 // delegating to the underlying Vault port. It is the single entry point for
 // MCP tool handlers — handlers must never call a Vault directly.
@@ -132,10 +142,11 @@ func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool)
 }
 
 func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
-	if q.AllowedScopes == nil {
-		return domain.QueryResult{}, errAllowedScopesNil
+	ok, err := s.checkScopes(q.AllowedScopes)
+	if err != nil {
+		return domain.QueryResult{}, err
 	}
-	if !slices.Contains(q.AllowedScopes, s.vault.Scope()) {
+	if !ok {
 		return domain.QueryResult{
 			Notes:           []domain.NoteSummary{},
 			ScopesAttempted: []domain.ScopeID{s.vault.Scope()},
@@ -153,10 +164,11 @@ func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.
 }
 
 func (s *NoteService) Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error) {
-	if filter.AllowedScopes == nil {
-		return nil, errAllowedScopesNil
+	ok, err := s.checkScopes(filter.AllowedScopes)
+	if err != nil {
+		return nil, err
 	}
-	if !slices.Contains(filter.AllowedScopes, s.vault.Scope()) {
+	if !ok {
 		return nil, nil
 	}
 	return s.vault.Search(ctx, text, filter.Filter, limit)
@@ -167,8 +179,8 @@ func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 }
 
 func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error) {
-	if allowedScopes == nil {
-		return domain.QueryResult{}, errAllowedScopesNil
+	if _, err := s.checkScopes(allowedScopes); err != nil {
+		return domain.QueryResult{}, err
 	}
 	cutoff := s.clock().AddDate(0, 0, -days)
 	return s.Query(ctx, domain.QueryRequest{
@@ -197,14 +209,15 @@ func (s *NoteService) Rescan(ctx context.Context) error {
 }
 
 func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error) {
-	if filter.AllowedScopes == nil {
-		return nil, errAllowedScopesNil
+	ok, err := s.checkScopes(filter.AllowedScopes)
+	if err != nil {
+		return nil, err
 	}
 	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(filter.AllowedScopes, s.vault.Scope()) {
+	if !ok {
 		return nil, nil
 	}
 	ref.Path = np.Storage
@@ -230,30 +243,33 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 }
 
 func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	if allowedScopes == nil {
-		return domain.BatchResult{}, errAllowedScopesNil
+	ok, err := s.checkScopes(allowedScopes)
+	if err != nil {
+		return domain.BatchResult{}, err
 	}
-	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+	if !ok {
 		return domain.BatchResult{}, nil
 	}
 	return s.vault.CreateBatch(ctx, inputs)
 }
 
 func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	if allowedScopes == nil {
-		return domain.BatchResult{}, errAllowedScopesNil
+	ok, err := s.checkScopes(allowedScopes)
+	if err != nil {
+		return domain.BatchResult{}, err
 	}
-	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+	if !ok {
 		return domain.BatchResult{}, nil
 	}
 	return s.vault.UpdateBodyBatch(ctx, items)
 }
 
 func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput, allowedScopes []domain.ScopeID) (domain.BatchResult, error) {
-	if allowedScopes == nil {
-		return domain.BatchResult{}, errAllowedScopesNil
+	ok, err := s.checkScopes(allowedScopes)
+	if err != nil {
+		return domain.BatchResult{}, err
 	}
-	if !slices.Contains(allowedScopes, s.vault.Scope()) {
+	if !ok {
 		return domain.BatchResult{}, nil
 	}
 	return s.vault.PatchFrontMatterBatch(ctx, items)
