@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/actor"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
@@ -22,7 +23,7 @@ type Option func(*vaultConfig)
 
 type vaultConfig struct {
 	indexOpts        []index.Option
-	ftsIndex         index.FTSIndex
+	ftsIndex         ports.FTSIndex
 	clock            func() time.Time
 	conflictPatterns []*regexp.Regexp
 	actorOpts        []actor.Option
@@ -37,7 +38,7 @@ func WithIndexOptions(opts ...index.Option) Option {
 }
 
 // WithFTSIndex replaces the default BM25 index with a custom implementation.
-func WithFTSIndex(i index.FTSIndex) Option {
+func WithFTSIndex(i ports.FTSIndex) Option {
 	return func(c *vaultConfig) { c.ftsIndex = i }
 }
 
@@ -77,7 +78,7 @@ type LocalVault struct {
 	clock func() time.Time
 
 	actors *actor.Pool
-	idx    index.FTSIndex
+	idx    ports.FTSIndex
 	w      *watcher
 
 	cache *NoteCache
@@ -700,8 +701,8 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	return collisions
 }
 
-func summaryToDoc(s domain.NoteSummary, body string) index.Doc {
-	return index.Doc{
+func summaryToDoc(s domain.NoteSummary, body string) ports.Doc {
+	return ports.Doc{
 		Ref:       s.Ref,
 		Title:     s.Title,
 		Body:      body,

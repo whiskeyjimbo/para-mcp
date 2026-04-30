@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
 func ref(scope, path string) domain.NoteRef {
 	return domain.NoteRef{Scope: scope, Path: path}
 }
 
-func addAndFlush(t *testing.T, idx *Index, docs ...Doc) {
+func addAndFlush(t *testing.T, idx *Index, docs ...ports.Doc) {
 	t.Helper()
 	for _, d := range docs {
 		idx.Add(d)
@@ -32,7 +33,7 @@ func TestIndex_BasicSearch(t *testing.T) {
 	idx := New()
 	defer idx.Close()
 
-	addAndFlush(t, idx, Doc{
+	addAndFlush(t, idx, ports.Doc{
 		Ref:   ref("personal", "projects/aws.md"),
 		Title: "AWS Networking",
 		Body:  "This note covers AWS VPC configuration and routing.",
@@ -51,7 +52,7 @@ func TestIndex_PorterStemming(t *testing.T) {
 	idx := New(WithStemmer(StemmerPorter))
 	defer idx.Close()
 
-	addAndFlush(t, idx, Doc{
+	addAndFlush(t, idx, ports.Doc{
 		Ref:  ref("personal", "projects/billing.md"),
 		Body: "We need to handle invoicing for enterprise customers.",
 	})
@@ -66,7 +67,7 @@ func TestIndex_NoStemming(t *testing.T) {
 	idx := New(WithStemmer(StemmerNone))
 	defer idx.Close()
 
-	addAndFlush(t, idx, Doc{
+	addAndFlush(t, idx, ports.Doc{
 		Ref:  ref("personal", "projects/billing.md"),
 		Body: "We need to handle invoicing for enterprise customers.",
 	})
@@ -82,12 +83,12 @@ func TestIndex_TitleBoost(t *testing.T) {
 	defer idx.Close()
 
 	addAndFlush(t, idx,
-		Doc{
+		ports.Doc{
 			Ref:   ref("personal", "projects/title-match.md"),
 			Title: "multitenant egress",
 			Body:  "Some unrelated content here about nothing special.",
 		},
-		Doc{
+		ports.Doc{
 			Ref:   ref("personal", "projects/body-match.md"),
 			Title: "Unrelated Title",
 			Body:  "This body mentions multitenant egress patterns extensively.",
@@ -108,7 +109,7 @@ func TestIndex_Remove(t *testing.T) {
 	defer idx.Close()
 
 	r := ref("personal", "projects/temp.md")
-	addAndFlush(t, idx, Doc{Ref: r, Body: "searchable content here"})
+	addAndFlush(t, idx, ports.Doc{Ref: r, Body: "searchable content here"})
 
 	if results := idx.Search("searchable", 10); len(results) == 0 {
 		t.Fatal("doc should be findable before removal")
@@ -127,13 +128,13 @@ func TestIndex_Update(t *testing.T) {
 	defer idx.Close()
 
 	r := ref("personal", "projects/evolving.md")
-	addAndFlush(t, idx, Doc{Ref: r, Body: "original content about golang"})
+	addAndFlush(t, idx, ports.Doc{Ref: r, Body: "original content about golang"})
 
 	if results := idx.Search("golang", 10); len(results) == 0 {
 		t.Fatal("should find original content")
 	}
 
-	addAndFlush(t, idx, Doc{Ref: r, Body: "completely different topic about rust"})
+	addAndFlush(t, idx, ports.Doc{Ref: r, Body: "completely different topic about rust"})
 
 	if results := idx.Search("golang", 10); len(results) != 0 {
 		t.Fatal("old terms should be removed after update")
@@ -147,7 +148,7 @@ func TestIndex_StopWordsNotIndexed(t *testing.T) {
 	idx := New()
 	defer idx.Close()
 
-	addAndFlush(t, idx, Doc{
+	addAndFlush(t, idx, ports.Doc{
 		Ref:  ref("personal", "projects/x.md"),
 		Body: "the quick brown fox",
 	})
@@ -162,8 +163,8 @@ func TestIndex_Ranking(t *testing.T) {
 	defer idx.Close()
 
 	addAndFlush(t, idx,
-		Doc{Ref: ref("personal", "projects/a.md"), Body: "kubernetes kubernetes kubernetes deployment"},
-		Doc{Ref: ref("personal", "projects/b.md"), Body: "kubernetes deployment overview"},
+		ports.Doc{Ref: ref("personal", "projects/a.md"), Body: "kubernetes kubernetes kubernetes deployment"},
+		ports.Doc{Ref: ref("personal", "projects/b.md"), Body: "kubernetes deployment overview"},
 	)
 
 	results := idx.Search("kubernetes", 10)
@@ -180,7 +181,7 @@ func TestIndex_UpdatedAt(t *testing.T) {
 	defer idx.Close()
 
 	ts := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
-	addAndFlush(t, idx, Doc{
+	addAndFlush(t, idx, ports.Doc{
 		Ref:       ref("personal", "projects/dated.md"),
 		Body:      "temporal content",
 		UpdatedAt: ts,
@@ -207,7 +208,7 @@ func TestIndex_ConcurrentReads(t *testing.T) {
 	idx := New()
 	defer idx.Close()
 
-	addAndFlush(t, idx, Doc{Ref: ref("personal", "projects/x.md"), Body: "concurrent access test"})
+	addAndFlush(t, idx, ports.Doc{Ref: ref("personal", "projects/x.md"), Body: "concurrent access test"})
 
 	done := make(chan struct{})
 	for range 10 {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/kljensen/snowball/english"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
 const (
@@ -71,21 +72,6 @@ func WithStopWords(words []string) Option {
 	return func(c *config) { c.stopWords = words }
 }
 
-// Doc is the document representation fed into the index.
-type Doc struct {
-	Ref       domain.NoteRef
-	Title     string
-	Body      string
-	UpdatedAt time.Time
-}
-
-// Result is a single search hit with its BM25 score.
-type Result struct {
-	Ref       domain.NoteRef
-	Score     float64
-	UpdatedAt time.Time
-}
-
 type posting struct {
 	bodyTF  float32
 	titleTF float32
@@ -106,17 +92,9 @@ type snapshot struct {
 }
 
 type writeOp struct {
-	doc      *Doc
+	doc      *ports.Doc
 	removeID *domain.NoteRef
 	syncDone chan<- struct{}
-}
-
-// FTSIndex is the interface LocalVault uses to interact with the full-text search index.
-type FTSIndex interface {
-	Add(doc Doc)
-	Remove(ref domain.NoteRef)
-	Search(query string, limit int) []Result
-	Close()
 }
 
 // Index is a BM25 full-text index.
@@ -159,7 +137,7 @@ func (idx *Index) Close() {
 }
 
 // Add indexes or re-indexes a document.
-func (idx *Index) Add(doc Doc) {
+func (idx *Index) Add(doc ports.Doc) {
 	d := doc
 	idx.ch <- writeOp{doc: &d}
 }
@@ -171,7 +149,7 @@ func (idx *Index) Remove(ref domain.NoteRef) {
 }
 
 // Search returns results matching the query, ordered by BM25 score descending.
-func (idx *Index) Search(query string, limit int) []Result {
+func (idx *Index) Search(query string, limit int) []ports.SearchResult {
 	if query == "" {
 		return nil
 	}
@@ -229,10 +207,10 @@ func (idx *Index) Search(query string, limit int) []Result {
 		ranked = ranked[:limit]
 	}
 
-	results := make([]Result, 0, len(ranked))
+	results := make([]ports.SearchResult, 0, len(ranked))
 	for _, kv := range ranked {
 		meta := snap.docs[kv.key]
-		results = append(results, Result{
+		results = append(results, ports.SearchResult{
 			Ref:       meta.ref,
 			Score:     kv.score,
 			UpdatedAt: meta.updatedAt,
@@ -293,7 +271,7 @@ func (idx *Index) removeDoc(snap *snapshot, key string) {
 	}
 }
 
-func (idx *Index) addDoc(snap *snapshot, key string, doc *Doc) {
+func (idx *Index) addDoc(snap *snapshot, key string, doc *ports.Doc) {
 	bodyTerms := idx.tokenize(doc.Body)
 	titleTerms := idx.tokenize(doc.Title)
 
