@@ -6,6 +6,7 @@ the MCP stdio transport, and reports pass/fail for each assertion.
 
 Usage:
     python3 scripts/test_mcp.py
+    python3 scripts/test_mcp.py -v          # show requests, responses, assertions
     python3 scripts/test_mcp.py --binary /path/to/paras
 """
 import argparse
@@ -20,16 +21,25 @@ from pathlib import Path
 
 PASS = "\033[32m✓\033[0m"
 FAIL = "\033[31m✗\033[0m"
-SKIP = "\033[33m-\033[0m"
+DIM  = "\033[2m"
+RESET = "\033[0m"
+CYAN  = "\033[36m"
+YELLOW = "\033[33m"
 
 _id = 0
 failures = 0
+verbose = False
 
 
 def next_id():
     global _id
     _id += 1
     return _id
+
+
+def vprint(*args, **kwargs):
+    if verbose:
+        print(*args, **kwargs)
 
 
 class MCPClient:
@@ -73,7 +83,6 @@ class MCPClient:
             },
         })
         resp = self._recv()
-        # Drain any extra notifications before sending initialized
         self._send({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
@@ -83,18 +92,20 @@ class MCPClient:
 
     def call(self, tool: str, arguments: dict) -> dict:
         rid = next_id()
-        self._send({
+        msg = {
             "jsonrpc": "2.0",
             "id": rid,
             "method": "tools/call",
             "params": {"name": tool, "arguments": arguments},
-        })
+        }
+        vprint(f"\n  {CYAN}→ {tool}{RESET}  {DIM}{json.dumps(arguments)}{RESET}")
+        self._send(msg)
         while True:
             resp = self._recv()
-            # Skip notifications
             if "method" in resp and "id" not in resp:
                 continue
             if resp.get("id") == rid:
+                _log_response(tool, resp)
                 return resp
 
     def close(self):
@@ -105,8 +116,26 @@ class MCPClient:
         self.proc.wait(timeout=5)
 
 
+def _log_response(tool: str, resp: dict):
+    if not verbose:
+        return
+    is_err, text = result_content(resp)
+    try:
+        parsed = json.loads(text)
+        pretty = json.dumps(parsed, indent=4)
+    except (json.JSONDecodeError, TypeError):
+        pretty = text
+    color = FAIL.replace("\033[0m", "") if is_err else PASS.replace("\033[0m", "")
+    label = "error" if is_err else "ok"
+    prefix = f"  {color} [{label}]{RESET} "
+    for i, line in enumerate(pretty.splitlines()):
+        if i == 0:
+            print(f"{prefix}{line}")
+        else:
+            print(f"       {line}")
+
+
 def result_content(resp: dict) -> tuple[bool, str]:
-    """Returns (is_error, text) from a tools/call response."""
     if "error" in resp:
         return True, str(resp["error"])
     result = resp.get("result", {})
@@ -116,26 +145,27 @@ def result_content(resp: dict) -> tuple[bool, str]:
     return is_error, text
 
 
-def parse_json(text: str) -> dict | list | None:
+def parse_json(text: str):
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         return None
 
 
-# --- assertion helpers ---
-
 def check(label: str, cond: bool, detail: str = ""):
     global failures
     if cond:
-        print(f"  {PASS} {label}")
+        if verbose:
+            print(f"  {PASS} {label}")
     else:
-        print(f"  {FAIL} {label}" + (f": {detail}" if detail else ""))
+        print(f"  {FAIL} {label}" + (f": {DIM}{detail}{RESET}" if detail else ""))
         failures += 1
 
 
 def check_ok(label: str, resp: dict) -> tuple[bool, str]:
     is_err, text = result_content(resp)
+    if not verbose and not is_err:
+        pass  # silent on success unless verbose
     check(label + " (no error)", not is_err, text if is_err else "")
     return is_err, text
 
@@ -144,8 +174,17 @@ def check_err(label: str, resp: dict, contains: str = "") -> str:
     is_err, text = result_content(resp)
     check(label + " (returns error)", is_err, text if not is_err else "")
     if contains:
-        check(label + f" (error contains {contains!r})", contains in text, text)
+        check(label + f" (contains {contains!r})", contains in text, text)
     return text
+
+
+def section(name: str):
+    if verbose:
+        print(f"\n{YELLOW}{'─' * 50}{RESET}")
+        print(f"{YELLOW}  {name}{RESET}")
+        print(f"{YELLOW}{'─' * 50}{RESET}")
+    else:
+        print(f"\n[{name}]")
 
 
 # ============================================================
@@ -154,8 +193,7 @@ def check_err(label: str, resp: dict, contains: str = "") -> str:
 
 def run_tests(c: MCPClient):
 
-    # ── note_create ──────────────────────────────────────────
-    print("\n[note_create]")
+    section("note_create")
     resp = c.call("note_create", {
         "path": "projects/hello.md",
         "title": "Hello World",
@@ -173,20 +211,16 @@ def run_tests(c: MCPClient):
         check("ETag present", data and bool(data.get("ETag")), str(data))
         etag_hello = data.get("ETag") if data else None
 
-    # duplicate create → conflict
     resp = c.call("note_create", {"path": "projects/hello.md"})
     check_err("duplicate create → conflict", resp, "conflict")
 
-    # invalid path (no PARA root)
     resp = c.call("note_create", {"path": "notes/foo.md"})
     check_err("non-PARA root → error", resp)
 
-    # path traversal
     resp = c.call("note_create", {"path": "../etc/passwd"})
     check_err("path traversal → error", resp)
 
-    # ── note_get ─────────────────────────────────────────────
-    print("\n[note_get]")
+    section("note_get")
     resp = c.call("note_get", {"scope": "personal", "path": "projects/hello.md"})
     is_err, text = check_ok("get projects/hello.md", resp)
     if not is_err:
@@ -194,12 +228,10 @@ def run_tests(c: MCPClient):
         check("body round-trips", data and "vpc configuration" in data.get("Body", ""), str(data))
         check("ETag matches create", data and data.get("ETag") == etag_hello, str(data))
 
-    # get non-existent
     resp = c.call("note_get", {"scope": "personal", "path": "projects/nope.md"})
     check_err("get missing → not_found", resp, "not_found")
 
-    # ── note_update_body ─────────────────────────────────────
-    print("\n[note_update_body]")
+    section("note_update_body")
     resp = c.call("note_update_body", {
         "scope": "personal",
         "path": "projects/hello.md",
@@ -213,7 +245,6 @@ def run_tests(c: MCPClient):
         check("ETag rotated", data and data.get("ETag") != etag_hello, str(data))
         etag_hello2 = data.get("ETag") if data else None
 
-    # stale ETag → conflict
     resp = c.call("note_update_body", {
         "scope": "personal",
         "path": "projects/hello.md",
@@ -222,8 +253,7 @@ def run_tests(c: MCPClient):
     })
     check_err("stale ETag → conflict", resp, "conflict")
 
-    # ── note_patch_frontmatter ───────────────────────────────
-    print("\n[note_patch_frontmatter]")
+    section("note_patch_frontmatter")
     resp = c.call("note_patch_frontmatter", {
         "scope": "personal",
         "path": "projects/hello.md",
@@ -238,8 +268,7 @@ def run_tests(c: MCPClient):
         check("title updated", data and data.get("Title") == "Hello Done", str(data))
         etag_hello3 = data.get("ETag") if data else None
 
-    # ── note_move ────────────────────────────────────────────
-    print("\n[note_move]")
+    section("note_move")
     resp = c.call("note_move", {
         "scope": "personal",
         "path": "projects/hello.md",
@@ -247,23 +276,17 @@ def run_tests(c: MCPClient):
         "if_match": etag_hello3,
     })
     is_err, text = check_ok("move to areas/", resp)
-    etag_moved = None
     if not is_err:
         data = parse_json(text)
         check("new path in ref", data and data.get("Ref", {}).get("Path") == "areas/hello.md", str(data))
-        etag_moved = data.get("ETag") if data else None
 
-    # old path gone
     resp = c.call("note_get", {"scope": "personal", "path": "projects/hello.md"})
     check_err("old path gone after move", resp, "not_found")
 
-    # new path accessible
     resp = c.call("note_get", {"scope": "personal", "path": "areas/hello.md"})
     check_ok("new path accessible after move", resp)
 
-    # ── note_archive ─────────────────────────────────────────
-    print("\n[note_archive]")
-    # Create a note to archive
+    section("note_archive")
     resp = c.call("note_create", {"path": "projects/to-archive.md", "body": "archive me"})
     _, text = result_content(resp)
     etag_arch = parse_json(text).get("ETag") if not result_content(resp)[0] else None
@@ -278,9 +301,7 @@ def run_tests(c: MCPClient):
         data = parse_json(text)
         check("moved to archives/", data and data.get("Ref", {}).get("Path", "").startswith("archives/"), str(data))
 
-    # ── notes_list ───────────────────────────────────────────
-    print("\n[notes_list]")
-    # Create a few more notes
+    section("notes_list")
     c.call("note_create", {"path": "resources/guide.md", "body": "resource content", "tags": ["aws"]})
     c.call("note_create", {"path": "projects/second.md", "status": "active"})
 
@@ -291,17 +312,14 @@ def run_tests(c: MCPClient):
         check("returns notes", data and len(data.get("Notes", [])) > 0, str(data))
         check("total > 0", data and data.get("Total", 0) > 0, str(data))
 
-    # filter by status
     resp = c.call("notes_list", {"status": "active"})
     is_err, text = check_ok("list by status=active", resp)
     if not is_err:
         data = parse_json(text)
         notes = data.get("Notes", []) if data else []
         check("all returned notes are active",
-              all(n.get("Status") == "active" for n in notes),
-              str(notes))
+              all(n.get("Status") == "active" for n in notes), str(notes))
 
-    # filter by category
     resp = c.call("notes_list", {"categories": ["projects"]})
     is_err, text = check_ok("list projects only", resp)
     if not is_err:
@@ -311,18 +329,16 @@ def run_tests(c: MCPClient):
               all(n.get("Ref", {}).get("Path", "").startswith("projects/") for n in notes),
               str(notes))
 
-    # sort and limit
     resp = c.call("notes_list", {"limit": 1, "sort": "updated_at"})
     is_err, text = check_ok("list with limit=1", resp)
     if not is_err:
         data = parse_json(text)
         check("exactly 1 result", data and len(data.get("Notes", [])) == 1, str(data))
-        check("has_more set when there are more", data and data.get("Total", 0) > 1, str(data))
+        check("has_more when total > 1", data and data.get("Total", 0) > 1, str(data))
 
-    # ── notes_search ─────────────────────────────────────────
-    print("\n[notes_search]")
-    # Create a dedicated search target so the term is definitely indexed.
-    c.call("note_create", {"path": "resources/searchable.md", "body": "unique_searchterm_xk9 about distributed systems"})
+    section("notes_search")
+    c.call("note_create", {"path": "resources/searchable.md",
+                           "body": "unique_searchterm_xk9 about distributed systems"})
     time.sleep(150 / 1000)  # let the BM25 writer goroutine publish the snapshot
 
     resp = c.call("notes_search", {"text": "unique_searchterm_xk9", "limit": 5})
@@ -333,15 +349,13 @@ def run_tests(c: MCPClient):
         if results:
             check("top result has Score", results[0].get("Score", 0) > 0, str(results[0]))
 
-    # search with no results
     resp = c.call("notes_search", {"text": "xyzzy_nonexistent_term_8675309"})
-    is_err, text = check_ok("search with no matches (no error)", resp)
+    is_err, text = check_ok("search with no matches", resp)
     if not is_err:
         results = parse_json(text)
         check("empty results for unknown term", results is not None and len(results) == 0, str(results))
 
-    # ── vault_stats ──────────────────────────────────────────
-    print("\n[vault_stats]")
+    section("vault_stats")
     resp = c.call("vault_stats", {})
     is_err, text = check_ok("vault_stats", resp)
     if not is_err:
@@ -349,39 +363,33 @@ def run_tests(c: MCPClient):
         check("TotalNotes > 0", data and data.get("TotalNotes", 0) > 0, str(data))
         check("ByCategory present", data and "ByCategory" in data, str(data))
 
-    # ── note_delete (soft) ───────────────────────────────────
-    print("\n[note_delete]")
+    section("note_delete")
     resp = c.call("note_create", {"path": "projects/soft-del.md", "body": "bye"})
-    _, text = result_content(resp)
-    etag_del = parse_json(text).get("ETag") if not result_content(resp)[0] else None
 
-    resp = c.call("note_delete", {
-        "scope": "personal",
-        "path": "projects/soft-del.md",
-        "soft": True,
-    })
+    resp = c.call("note_delete", {"scope": "personal", "path": "projects/soft-del.md", "soft": True})
     check_ok("soft delete", resp)
 
     resp = c.call("note_get", {"scope": "personal", "path": "projects/soft-del.md"})
-    check_err("soft-deleted note not accessible via get", resp, "not_found")
+    check_err("soft-deleted note not accessible", resp, "not_found")
 
-    # hard delete
     c.call("note_create", {"path": "projects/hard-del.md", "body": "gone"})
-    resp = c.call("note_delete", {
-        "scope": "personal",
-        "path": "projects/hard-del.md",
-        "soft": False,
-    })
+    resp = c.call("note_delete", {"scope": "personal", "path": "projects/hard-del.md", "soft": False})
     check_ok("hard delete", resp)
 
     resp = c.call("note_get", {"scope": "personal", "path": "projects/hard-del.md"})
-    check_err("hard-deleted note not accessible via get", resp, "not_found")
+    check_err("hard-deleted note not accessible", resp, "not_found")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", default="", help="path to paras binary")
+    global verbose
+
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--binary", default="", help="path to pre-built paras binary")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="print each request, response, and passing assertion")
     args = parser.parse_args()
+    verbose = args.verbose
 
     repo = Path(__file__).parent.parent
     binary = args.binary
@@ -391,9 +399,7 @@ def main():
         binary = str(repo / "paras-test-bin")
         result = subprocess.run(
             ["go", "build", "-o", binary, "./cmd/paras/"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
+            cwd=repo, capture_output=True, text=True,
         )
         if result.returncode != 0:
             print(f"Build failed:\n{result.stderr}")
@@ -406,13 +412,12 @@ def main():
             print("Initializing MCP session...")
             init_resp = c.initialize()
             server_info = init_resp.get("result", {}).get("serverInfo", {})
-            print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}\n")
+            print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}")
 
             run_tests(c)
 
         finally:
             c.close()
-            # Clean up build artifact
             if not args.binary:
                 try:
                     os.unlink(binary)
@@ -420,7 +425,6 @@ def main():
                     pass
 
     print()
-    total = _id - 1  # rough proxy
     if failures == 0:
         print(f"{PASS} All assertions passed")
     else:
