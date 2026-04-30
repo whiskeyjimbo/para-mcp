@@ -1,4 +1,4 @@
-// Package mcp wires LocalVault to the MCP tool surface via stdio transport.
+// Package mcp wires NoteService to the MCP tool surface via stdio transport.
 package mcp
 
 import (
@@ -11,25 +11,19 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/domain"
-	"github.com/whiskeyjimbo/paras/internal/vault"
+	"github.com/whiskeyjimbo/paras/internal/application"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
 // ScopesFunc resolves the permitted scopes for a request.
-// Phase 1: returns a hard-coded single-vault slice.
-// Phase 3: replaced with an RBAC resolver that reads caller identity
-// from ctx and returns only the scopes that caller may access.
 type ScopesFunc func(ctx context.Context) []domain.ScopeID
 
-// personalOnly is the Phase 1 resolver: always permit the personal vault.
 func personalOnly(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 }
 
 // Build constructs and returns an MCPServer wired to svc.
-// scopesFn resolves permitted scopes per request; pass nil to use the
-// default single-vault personal resolver.
-func Build(svc *vault.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
+func Build(svc *application.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
 	if scopesFn == nil {
 		scopesFn = personalOnly
 	}
@@ -52,7 +46,6 @@ func Build(svc *vault.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
 	s.AddTool(toolNotesSearch(), h.notesSearch)
 	s.AddTool(toolVaultStats(), h.vaultStats)
 
-	// Phase 2 tools
 	s.AddTool(toolNotesBacklinks(), h.notesBacklinks)
 	s.AddTool(toolNotesRelated(), h.notesRelated)
 	s.AddTool(toolNotesStale(), h.notesStale)
@@ -66,7 +59,7 @@ func Build(svc *vault.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
 }
 
 type handlers struct {
-	svc    *vault.NoteService
+	svc    *application.NoteService
 	scopes ScopesFunc
 }
 
@@ -344,8 +337,6 @@ func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*m
 	return jsonResult(stats)
 }
 
-// ── Phase 2 tools ────────────────────────────────────────────────────────────
-
 func toolNotesBacklinks() mcplib.Tool {
 	return mcplib.NewTool("notes_backlinks",
 		mcplib.WithDescription("Return notes that contain a wikilink pointing at the given note."),
@@ -422,7 +413,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	result, err := h.svc.Query(ctx, domain.QueryRequest{
 		Filter: f,
 		Sort:   domain.SortByUpdated,
-		Desc:   false, // oldest first
+		Desc:   false,
 		Limit:  req.GetInt("limit", 20),
 	})
 	if err != nil {
@@ -431,7 +422,6 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	return jsonResult(result)
 }
 
-// timeNow is a variable so tests can override it.
 var timeNow = func() time.Time { return time.Now() }
 
 func toolVaultHealth() mcplib.Tool {

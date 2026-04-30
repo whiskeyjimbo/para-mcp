@@ -42,7 +42,6 @@ func TestPool_DifferentPathsRunConcurrently(t *testing.T) {
 	p := New()
 	defer p.Close()
 
-	// Two paths should not block each other.
 	var started int32
 	block := make(chan struct{})
 
@@ -58,12 +57,10 @@ func TestPool_DifferentPathsRunConcurrently(t *testing.T) {
 		})
 	}()
 
-	// Wait until the first op has started.
 	for atomic.LoadInt32(&started) == 0 {
 		time.Sleep(time.Millisecond)
 	}
 
-	// Second path must not be blocked by the first.
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
@@ -75,7 +72,6 @@ func TestPool_DifferentPathsRunConcurrently(t *testing.T) {
 
 	select {
 	case <-done:
-		// good: different paths ran concurrently
 	case <-time.After(2 * time.Second):
 		t.Fatal("different-path operation was blocked by unrelated path")
 	}
@@ -88,7 +84,6 @@ func TestPool_ScopeSeparation(t *testing.T) {
 	p := New()
 	defer p.Close()
 
-	// same path in different scopes must be independent actors
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -130,14 +125,13 @@ func TestPool_ContextCancellation(t *testing.T) {
 	defer p.Close()
 
 	block := make(chan struct{})
-	// Fill the actor with a blocking op.
 	go func() {
 		_ = p.Do(context.Background(), "personal", "projects/z.md", func() error {
 			<-block
 			return nil
 		})
 	}()
-	time.Sleep(5 * time.Millisecond) // let the blocking op start
+	time.Sleep(5 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

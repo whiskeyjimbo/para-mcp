@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"errors"
 	"time"
 )
@@ -16,7 +15,7 @@ var (
 type SearchMode string
 
 const (
-	SearchModeLexical SearchMode = "lexical" // BM25 only (Phase 1)
+	SearchModeLexical SearchMode = "lexical"
 )
 
 // SortField names the field used to order query results.
@@ -26,7 +25,7 @@ const (
 	SortByUpdated   SortField = "updated_at"
 	SortByCreated   SortField = "created_at"
 	SortByTitle     SortField = "title"
-	SortByRelevance SortField = "relevance" // valid only when Filter.Text is set
+	SortByRelevance SortField = "relevance"
 )
 
 // Capabilities reports what a vault supports.
@@ -111,8 +110,7 @@ type VaultStats struct {
 	ByCategory map[Category]int
 }
 
-// CaseCollision is a pair of paths that differ only in case on a
-// case-sensitive vault, representing a federation portability risk.
+// CaseCollision is a pair of paths that differ only in case on a case-sensitive vault.
 type CaseCollision struct {
 	PathA string
 	PathB string
@@ -123,30 +121,5 @@ type VaultHealth struct {
 	CaseCollisions    []CaseCollision
 	UnrecognizedFiles int
 	SyncConflicts     int
-	WatcherStatus     string // "ok" | "limit_exceeded"
-}
-
-// Vault is the storage port. LocalVault and RemoteVault both implement it.
-//
-// AllowedScopes contract: every method that accepts a Filter must apply
-// Filter.AllowedScopes as an index-side pre-filter. nil AllowedScopes
-// triggers an internal error; empty []ScopeID{} returns an empty result.
-type Vault interface {
-	Scope() ScopeID
-	Capabilities() Capabilities
-
-	Get(ctx context.Context, path string) (Note, error)
-	Create(ctx context.Context, in CreateInput) (NoteSummary, error)
-	UpdateBody(ctx context.Context, path, body string, ifMatch string) (NoteSummary, error)
-	PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (NoteSummary, error)
-	Move(ctx context.Context, path, newPath string, ifMatch string) (NoteSummary, error)
-	Delete(ctx context.Context, path string, soft bool) error
-
-	Query(ctx context.Context, q QueryRequest) (QueryResult, error)
-	Search(ctx context.Context, text string, filter Filter, limit int) ([]RankedNote, error)
-	Backlinks(ctx context.Context, ref NoteRef, includeAssets bool, filter Filter) ([]BacklinkEntry, error)
-
-	Stats(ctx context.Context) (VaultStats, error)
-	Health(ctx context.Context) (VaultHealth, error)
-	Rescan(ctx context.Context) error
+	WatcherStatus     string
 }

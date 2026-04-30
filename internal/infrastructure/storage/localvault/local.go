@@ -1,5 +1,5 @@
-// Package vault implements the LocalVault filesystem adapter and NoteService.
-package vault
+// Package localvault implements the filesystem-backed Vault adapter.
+package localvault
 
 import (
 	"context"
@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/actor"
-	"github.com/whiskeyjimbo/paras/internal/domain"
-	"github.com/whiskeyjimbo/paras/internal/index"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/actor"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
 
-// errInternal is returned when AllowedScopes is nil (programmer error).
 var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
+// LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
 	scope     string
 	root      string
@@ -32,9 +32,9 @@ type LocalVault struct {
 	w      *watcher
 
 	mu        sync.RWMutex
-	notes     map[string]domain.NoteSummary // indexKey -> summary
-	outLinks  map[string][]outLink          // storagePath -> outgoing links
-	backlinks map[string][]backlinkSrc      // targetKey -> sources
+	notes     map[string]domain.NoteSummary
+	outLinks  map[string][]outLink
+	backlinks map[string][]backlinkSrc
 }
 
 // New creates a LocalVault rooted at root with the given scope.
@@ -84,7 +84,6 @@ func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
 	return v.readNote(np.Storage)
 }
 
-// Create returns ErrConflict if the path already exists (enforced atomically via O_EXCL).
 func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error) {
 	np, err := v.normalizePath(in.Path)
 	if err != nil {
@@ -96,7 +95,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 			return err
 		}
-		// Apply per-category template defaults for fields not explicitly set.
 		cat, hasCat := domain.CategoryFromPath(np.Storage)
 		if hasCat {
 			if tmpl, ok := v.templates[cat]; ok {
@@ -119,7 +117,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err != nil {
 			return err
 		}
-		// O_EXCL makes the existence check atomic, eliminating the TOCTOU race.
 		f, err := os.OpenFile(absPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
 			if os.IsExist(err) {
@@ -148,7 +145,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 	return summary, err
 }
 
-// UpdateBody replaces the body of an existing note, checking the ETag.
 func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string) (domain.NoteSummary, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
@@ -183,7 +179,6 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 	return summary, err
 }
 
-// PatchFrontMatter merges fields into the note's frontmatter, checking the ETag.
 func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.NoteSummary, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
@@ -209,7 +204,6 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 			return err
 		}
 		summary = v.noteToSummary(note)
-		// Body unchanged; preserve existing outgoing links.
 		existingLinks := v.getLinksLocked(np.Storage)
 		v.upsertWithLinks(np.IndexKey, np.Storage, summary, existingLinks)
 		return nil
@@ -217,7 +211,6 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 	return summary, err
 }
 
-// Move renames a note to a new vault-relative path.
 func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.NoteSummary, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
@@ -259,7 +252,6 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 	return summary, err
 }
 
-// Delete removes or soft-deletes a note.
 func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 	np, err := v.normalizePath(path)
 	if err != nil {
@@ -291,7 +283,6 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 	})
 }
 
-// Query returns notes matching the filter, sorted and paginated.
 func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
 	if err := checkAllowedScopes(q.Filter.AllowedScopes, v.scope); err != nil {
 		if errors.Is(err, errDenied) {
@@ -341,7 +332,6 @@ func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.Que
 	}, nil
 }
 
-// Search returns notes ranked by BM25 relevance.
 func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
 	if err := checkAllowedScopes(filter.AllowedScopes, v.scope); err != nil {
 		if errors.Is(err, errDenied) {
@@ -352,7 +342,7 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	if limit <= 0 {
 		limit = 20
 	}
-	hits := v.idx.Search(text, limit*3) // over-fetch to allow post-filter
+	hits := v.idx.Search(text, limit*3)
 	var results []domain.RankedNote
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -373,8 +363,6 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	return results, nil
 }
 
-// Backlinks returns notes that contain a wikilink pointing at ref.
-// When includeAssets is false, notes that only reference ref via ![[...]] are excluded.
 func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
 	if filter.AllowedScopes == nil {
 		return nil, errInternal
@@ -413,12 +401,10 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 	return entries, nil
 }
 
-// Rescan triggers an immediate full vault scan, minting IDs for any new notes.
 func (v *LocalVault) Rescan(_ context.Context) error {
 	return v.scanVault()
 }
 
-// Stats returns aggregate note counts.
 func (v *LocalVault) Stats(_ context.Context) (domain.VaultStats, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -430,7 +416,6 @@ func (v *LocalVault) Stats(_ context.Context) (domain.VaultStats, error) {
 	return stats, nil
 }
 
-// Health returns vault diagnostic information including case collisions and unrecognized files.
 func (v *LocalVault) Health(_ context.Context) (domain.VaultHealth, error) {
 	h := domain.VaultHealth{
 		WatcherStatus:     v.w.watcherStatus.Load().(string),
@@ -443,8 +428,6 @@ func (v *LocalVault) Health(_ context.Context) (domain.VaultHealth, error) {
 	return h, nil
 }
 
-// countUnrecognized walks the vault root and counts files that are not
-// markdown notes in a PARA directory and not in known system directories.
 func (v *LocalVault) countUnrecognized() int {
 	var count int
 	_ = filepath.WalkDir(v.root, func(path string, d fs.DirEntry, err error) error {
@@ -457,7 +440,6 @@ func (v *LocalVault) countUnrecognized() int {
 		}
 		rel = filepath.ToSlash(rel)
 		first, _, _ := strings.Cut(rel, "/")
-		// skip hidden/system dirs
 		if strings.HasPrefix(first, ".") {
 			return filepath.SkipDir
 		}
@@ -472,7 +454,6 @@ func (v *LocalVault) countUnrecognized() int {
 	return count
 }
 
-// CreateBatch creates notes independently; one failure does not block siblings.
 func (v *LocalVault) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
 	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(inputs))}
 	for i, in := range inputs {
@@ -498,7 +479,6 @@ func (v *LocalVault) CreateBatch(ctx context.Context, inputs []domain.CreateInpu
 	return res, nil
 }
 
-// UpdateBodyBatch updates note bodies independently; one failure does not block siblings.
 func (v *LocalVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
 	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
 	for i, it := range items {
@@ -517,7 +497,6 @@ func (v *LocalVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUp
 	return res, nil
 }
 
-// PatchFrontMatterBatch patches frontmatter independently; one failure does not block siblings.
 func (v *LocalVault) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
 	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
 	for i, it := range items {
@@ -577,7 +556,6 @@ func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
 	}
 }
 
-// upsertWithLinks updates the notes map and link index atomically under mu.
 func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
 	v.mu.Lock()
 	v.notes[indexKey] = s
@@ -586,8 +564,6 @@ func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.Note
 	v.mu.Unlock()
 }
 
-// removeLinkIndexLocked removes all outgoing link entries for storagePath.
-// Must be called with mu held.
 func (v *LocalVault) removeLinkIndexLocked(storagePath string) {
 	old, ok := v.outLinks[storagePath]
 	if !ok {
@@ -610,8 +586,6 @@ func (v *LocalVault) removeLinkIndexLocked(storagePath string) {
 	delete(v.outLinks, storagePath)
 }
 
-// addLinkIndexLocked records outgoing links for storagePath in the reverse index.
-// Must be called with mu held.
 func (v *LocalVault) addLinkIndexLocked(storagePath string, links []outLink) {
 	if len(links) == 0 {
 		return
@@ -625,8 +599,6 @@ func (v *LocalVault) addLinkIndexLocked(storagePath string, links []outLink) {
 	}
 }
 
-// getLinksLocked returns the current outgoing links for storagePath without modifying them.
-// Used when a frontmatter patch doesn't change the body.
 func (v *LocalVault) getLinksLocked(storagePath string) []outLink {
 	v.mu.RLock()
 	links := v.outLinks[storagePath]
@@ -634,7 +606,6 @@ func (v *LocalVault) getLinksLocked(storagePath string) []outLink {
 	return links
 }
 
-// removeNoteFromAllIndexes removes a note from the notes map, link index, and BM25 index.
 func (v *LocalVault) removeNoteFromAllIndexes(indexKey, storagePath string) {
 	ref := domain.NoteRef{Scope: v.scope, Path: storagePath}
 	v.mu.Lock()
@@ -659,15 +630,13 @@ func (v *LocalVault) scanVault() error {
 		rel = filepath.ToSlash(rel)
 		np, err := domain.Normalize(v.root, rel, v.caps.CaseSensitive)
 		if err != nil {
-			return nil // skip unrecognized paths
+			return nil
 		}
 		v.indexNote(path, np)
 		return nil
 	})
 }
 
-// indexNote reads absPath, ensures it has a NoteID, persists if needed, then
-// upserts into the in-memory index. Safe to call from multiple goroutines.
 func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 	note, err := v.readNote(np.Storage)
 	if err != nil {
@@ -701,10 +670,8 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	return collisions
 }
 
-// errDenied signals an empty AllowedScopes (deny-all, not an error).
 var errDenied = errors.New("denied")
 
-// checkAllowedScopes enforces the AllowedScopes pre-filter contract.
 func checkAllowedScopes(allowed []domain.ScopeID, scope domain.ScopeID) error {
 	if allowed == nil {
 		return errInternal
@@ -775,7 +742,7 @@ func sortSummaries(notes []domain.NoteSummary, field domain.SortField, desc bool
 		switch field {
 		case domain.SortByTitle:
 			cmp = strings.Compare(a.Title, b.Title)
-		default: // SortByUpdated, SortByCreated (CreatedAt not yet in summary)
+		default:
 			cmp = a.UpdatedAt.Compare(b.UpdatedAt)
 		}
 		if desc {
@@ -814,7 +781,6 @@ func applyFrontMatterPatch(fm *domain.FrontMatter, fields map[string]any) {
 				fm.Project = s
 			}
 		case "tags":
-			// Handled via Extra or direct slice assertion.
 			switch tv := v.(type) {
 			case []string:
 				fm.Tags = normalizeTags(tv)
@@ -859,13 +825,10 @@ func isMDFile(path string) bool {
 	return ext == ".md" || ext == ".markdown"
 }
 
-// probeCaseSensitivity writes a probe file and reads it back with opposite
-// case to determine if the filesystem is case-sensitive.
 func probeCaseSensitivity(root string) bool {
 	probe := filepath.Join(root, ".para_case_probe")
 	_ = os.WriteFile(probe, []byte{}, 0o600)
 	defer os.Remove(probe)
 	_, err := os.Stat(strings.ToUpper(probe))
-	// On case-insensitive FS the upper-cased probe resolves to the same file.
 	return os.IsNotExist(err)
 }

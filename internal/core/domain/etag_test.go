@@ -9,7 +9,6 @@ import (
 func TestComputeETag_format(t *testing.T) {
 	fm := FrontMatter{Title: "Test"}
 	etag := ComputeETag(fm, "body")
-	// Must be a strong ETag: "xxxx" (no W/ prefix), 16 hex chars inside quotes.
 	if !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
 		t.Fatalf("ETag not quoted: %q", etag)
 	}
@@ -43,7 +42,6 @@ func TestComputeETag_bodyChangeRotates(t *testing.T) {
 }
 
 func TestComputeETag_derivedExcluded(t *testing.T) {
-	// derived key in Extra must not affect the ETag.
 	fm1 := FrontMatter{Title: "Hello", Extra: map[string]any{}}
 	fm2 := FrontMatter{Title: "Hello", Extra: map[string]any{
 		"derived": map[string]any{"summary": "some AI summary"},
@@ -56,21 +54,13 @@ func TestComputeETag_derivedExcluded(t *testing.T) {
 }
 
 func TestComputeETag_mtimeExcluded(t *testing.T) {
-	// Changing UpdatedAt (mtime-equivalent) must not rotate ETag.
 	fm1 := FrontMatter{Title: "Hello", UpdatedAt: time.Now()}
 	fm2 := FrontMatter{Title: "Hello", UpdatedAt: time.Now().Add(1e9)}
-	a := ComputeETag(fm1, "body")
-	b := ComputeETag(fm2, "body")
-	// UpdatedAt IS part of user-authored frontmatter per spec (not excluded like derived).
-	// What's excluded is mtime from the filesystem, not UpdatedAt in frontmatter.
-	// So these ETags may differ — that is correct behavior.
-	// This test just documents that derived is what's excluded, not all timestamps.
-	_ = a
-	_ = b
+	_ = ComputeETag(fm1, "body")
+	_ = ComputeETag(fm2, "body")
 }
 
 func TestComputeETag_keyOrderIrrelevant(t *testing.T) {
-	// Keys are sorted canonically, so insertion order in Extra should not matter.
 	fm1 := FrontMatter{Extra: map[string]any{"z_key": "val1", "a_key": "val2"}}
 	fm2 := FrontMatter{Extra: map[string]any{"a_key": "val2", "z_key": "val1"}}
 	a := ComputeETag(fm1, "body")

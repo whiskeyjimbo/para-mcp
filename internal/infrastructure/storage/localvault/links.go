@@ -1,4 +1,4 @@
-package vault
+package localvault
 
 import (
 	"path/filepath"
@@ -7,22 +7,18 @@ import (
 )
 
 // wikilinkRE matches [[target]], [[target|alias]], ![[asset]], ![[asset|alias]].
-// Group 1: "!" prefix (asset embed). Group 2: target text (before | or ]]).
 var wikilinkRE = regexp.MustCompile(`(!?)\[\[([^\]|]+)`)
 
-// outLink is one edge in the outgoing wikilink graph.
 type outLink struct {
-	targetKey string // normalized key used for reverse-index lookup
-	isAsset   bool   // true if ![[...]] embed syntax
+	targetKey string
+	isAsset   bool
 }
 
-// backlinkSrc is the reverse edge: a note that links to a target.
 type backlinkSrc struct {
-	path    string // source note vault-relative storage path
+	path    string
 	isAsset bool
 }
 
-// parseLinks extracts all wikilinks from body, deduplicating by target key.
 func parseLinks(body string) []outLink {
 	matches := wikilinkRE.FindAllStringSubmatch(body, -1)
 	out := make([]outLink, 0, len(matches))
@@ -30,7 +26,6 @@ func parseLinks(body string) []outLink {
 	for _, m := range matches {
 		isAsset := m[1] == "!"
 		raw := strings.TrimSpace(m[2])
-		// strip #section fragment
 		if i := strings.IndexByte(raw, '#'); i >= 0 {
 			raw = raw[:i]
 		}
@@ -49,8 +44,7 @@ func parseLinks(body string) []outLink {
 }
 
 // linkMatchKeys returns all normalized keys under which a vault-relative path
-// may appear in a wikilink. E.g. "projects/hello.md" →
-// ["hello", "hello.md", "projects/hello", "projects/hello.md"]
+// may appear in a wikilink.
 func linkMatchKeys(path string) []string {
 	base := filepath.Base(path)
 	ext := filepath.Ext(base)

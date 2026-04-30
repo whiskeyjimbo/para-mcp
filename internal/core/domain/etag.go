@@ -13,10 +13,8 @@ import (
 //
 //	ETag = '"' + hex(blake3(canonical_user_yaml + "\n---\n" + body))[:16] + '"'
 //
-// canonical_user_yaml is the frontmatter with the 'derived' namespace removed
-// and keys sorted. mtime is not part of the input so a touch does not rotate
-// the ETag. The 'derived' block is excluded so async pipeline writes don't
-// invalidate in-flight ETags from user edits.
+// The 'derived' block is excluded so async pipeline writes don't invalidate
+// in-flight ETags from user edits.
 func ComputeETag(fm FrontMatter, body string) string {
 	canonical := canonicalFrontMatterYAML(fm)
 	input := canonical + "\n---\n" + body
@@ -24,16 +22,11 @@ func ComputeETag(fm FrontMatter, body string) string {
 	return `"` + hex.EncodeToString(sum[:8]) + `"`
 }
 
-// canonicalFrontMatterYAML serializes fm to YAML with the 'derived' key removed
-// and all top-level keys sorted alphabetically.
 func canonicalFrontMatterYAML(fm FrontMatter) string {
 	var doc yaml.Node
 	if err := doc.Encode(fm); err != nil {
-		// FrontMatter is a known type; encoding failure is a programmer error.
 		panic("canonicalFrontMatterYAML: " + err.Error())
 	}
-	// yaml.Node.Encode populates doc as a MappingNode directly (not DocumentNode).
-	// If it produced a DocumentNode, unwrap to the Mapping child.
 	mapping := &doc
 	if doc.Kind == yaml.DocumentNode {
 		if len(doc.Content) == 0 {
@@ -52,7 +45,6 @@ func canonicalFrontMatterYAML(fm FrontMatter) string {
 	return b.String()
 }
 
-// removeMappingKey removes a key (and its value) from a yaml Mapping node.
 func removeMappingKey(mapping *yaml.Node, key string) {
 	out := mapping.Content[:0]
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
@@ -64,7 +56,6 @@ func removeMappingKey(mapping *yaml.Node, key string) {
 	mapping.Content = out
 }
 
-// sortMappingKeys sorts the key-value pairs of a yaml Mapping node by key name.
 func sortMappingKeys(mapping *yaml.Node) {
 	type pair struct{ k, v *yaml.Node }
 	pairs := make([]pair, 0, len(mapping.Content)/2)

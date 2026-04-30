@@ -8,7 +8,6 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// paraNamespace is the fixed UUIDv5 namespace for deriving stable note IDs.
 var paraNamespace = uuid.MustParse("01960000-0000-7000-8000-000000000000")
 
 func MintNoteID() string {
@@ -16,7 +15,6 @@ func MintNoteID() string {
 }
 
 // DeriveNoteID produces a stable ID for editor-created notes.
-// The result is stable for the same path and initial content hash.
 func DeriveNoteID(path, contentHash string) string {
 	return uuid.NewSHA1(paraNamespace, []byte(path+"\x00"+contentHash)).String()
 }

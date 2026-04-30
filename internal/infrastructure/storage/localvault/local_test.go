@@ -1,12 +1,13 @@
-package vault
+package localvault
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/domain"
-	"github.com/whiskeyjimbo/paras/internal/index"
+	"github.com/whiskeyjimbo/paras/internal/application"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
 
 func newTestVault(t *testing.T) *LocalVault {
@@ -58,7 +59,6 @@ func TestLocalVault_UpdateBody_ETag(t *testing.T) {
 
 	sum, _ := v.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "v1"})
 
-	// Correct ETag — should succeed.
 	sum2, err := v.UpdateBody(ctx, "projects/x.md", "v2", sum.ETag)
 	if err != nil {
 		t.Fatalf("UpdateBody: %v", err)
@@ -67,7 +67,6 @@ func TestLocalVault_UpdateBody_ETag(t *testing.T) {
 		t.Error("ETag should change after update")
 	}
 
-	// Stale ETag — should conflict.
 	_, err = v.UpdateBody(ctx, "projects/x.md", "v3", sum.ETag)
 	if err == nil {
 		t.Fatal("expected conflict error on stale ETag")
@@ -108,11 +107,9 @@ func TestLocalVault_Move(t *testing.T) {
 		t.Fatalf("Move: %v", err)
 	}
 
-	// Old path should not exist.
 	if _, err := v.Get(ctx, "projects/old.md"); err == nil {
 		t.Error("old path should not exist after move")
 	}
-	// New path should exist.
 	if _, err := v.Get(ctx, "archives/old.md"); err != nil {
 		t.Errorf("new path should exist: %v", err)
 	}
@@ -212,7 +209,6 @@ func TestLocalVault_Search(t *testing.T) {
 		Body:        "This note covers vpc configuration",
 	})
 
-	// Give index writer time to process.
 	time.Sleep(50 * time.Millisecond)
 
 	results, err := v.Search(ctx, "vpc", domain.Filter{AllowedScopes: allowedPersonal}, 10)
@@ -264,7 +260,7 @@ func TestLocalVault_TagNormalization(t *testing.T) {
 
 func TestNoteService_RejectsInvalidPath(t *testing.T) {
 	v := newTestVault(t)
-	svc := NewService(v)
+	svc := application.NewService(v)
 	ctx := context.Background()
 
 	_, err := svc.Get(ctx, domain.NoteRef{Scope: "personal", Path: "../etc/passwd"})
@@ -275,7 +271,7 @@ func TestNoteService_RejectsInvalidPath(t *testing.T) {
 
 func TestNoteService_RejectsNonPARARoot(t *testing.T) {
 	v := newTestVault(t)
-	svc := NewService(v)
+	svc := application.NewService(v)
 	ctx := context.Background()
 
 	_, err := svc.Get(ctx, domain.NoteRef{Scope: "personal", Path: "notes/foo.md"})

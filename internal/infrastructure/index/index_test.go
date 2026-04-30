@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
 func ref(scope, path string) domain.NoteRef {
@@ -56,7 +56,6 @@ func TestIndex_PorterStemming(t *testing.T) {
 		Body: "We need to handle invoicing for enterprise customers.",
 	})
 
-	// "invoice" should match "invoicing" via Porter stemmer
 	results := idx.Search("invoice", 10)
 	if len(results) == 0 {
 		t.Fatal("Porter stemmer: 'invoice' should match 'invoicing'")
@@ -72,7 +71,6 @@ func TestIndex_NoStemming(t *testing.T) {
 		Body: "We need to handle invoicing for enterprise customers.",
 	})
 
-	// Without stemming, "invoice" should NOT match "invoicing"
 	results := idx.Search("invoice", 10)
 	if len(results) != 0 {
 		t.Fatal("StemmerNone: 'invoice' should not match 'invoicing'")

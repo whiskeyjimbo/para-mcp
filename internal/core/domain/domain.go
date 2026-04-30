@@ -9,12 +9,9 @@ import (
 )
 
 // ScopeID is the canonical type for scope identifiers across the API.
-// Alias rather than a new type so existing string-keyed maps and JSON
-// serialization stay unchanged.
 type ScopeID = string
 
 // NoteRef addresses a note across the federation: scope + vault-relative path.
-// String form: "personal:projects/infra-refactor.md"
 type NoteRef struct {
 	Scope ScopeID
 	Path  string
@@ -91,7 +88,6 @@ const (
 )
 
 // DerivedMetadata holds model-generated fields for a note.
-// Only populated when the vault has Derived capability.
 type DerivedMetadata struct {
 	Summary       string    `json:"summary"`
 	Entities      []Entity  `json:"entities,omitempty"`
@@ -140,13 +136,7 @@ type NoteSummary struct {
 	IndexState IndexState
 }
 
-// NormalizeTag applies the canonical tag normalization at every write boundary.
-//
-//  1. Trim leading/trailing whitespace
-//  2. Strip a leading '#' if present
-//  3. Lowercase (Unicode-aware)
-//  4. Collapse internal whitespace runs to single '-'
-//  5. Reject if result is empty or longer than 64 runes
+// NormalizeTag applies canonical tag normalization at every write boundary.
 func NormalizeTag(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "#")
@@ -178,17 +168,16 @@ type BatchPatchFrontMatterInput struct {
 // BacklinkEntry is a note that contains a wikilink pointing at a given target.
 type BacklinkEntry struct {
 	Summary NoteSummary
-	IsAsset bool // true when referenced via ![[...]] asset-embed syntax
+	IsAsset bool
 }
 
 // BatchItemResult reports per-note outcome for a batch operation.
-// One note's failure never rolls back siblings.
 type BatchItemResult struct {
-	Index   int          // position in the original request slice
-	Path    string       // vault-relative path
-	OK      bool         // true on success
-	Summary *NoteSummary // non-nil on success
-	Error   string       // non-empty on failure
+	Index   int
+	Path    string
+	OK      bool
+	Summary *NoteSummary
+	Error   string
 }
 
 // BatchResult is the aggregate response for a batch operation.
@@ -213,7 +202,6 @@ var DefaultTemplates = map[Category]CategoryTemplate{
 }
 
 // NormalizeScopeID applies canonical scope ID normalization.
-// Rules: lowercase, trim whitespace, [a-z0-9_-] only, 1-64 runes.
 func NormalizeScopeID(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	s = strings.ToLower(s)

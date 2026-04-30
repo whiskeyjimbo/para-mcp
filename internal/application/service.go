@@ -1,4 +1,6 @@
-package vault
+// Package application contains the NoteService use-case layer.
+// It depends only on core/domain and core/ports — never on infrastructure.
+package application
 
 import (
 	"cmp"
@@ -7,18 +9,19 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/whiskeyjimbo/paras/internal/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
 // NoteService validates all NoteRef inputs via domain.Normalize before
-// delegating to the underlying Vault. It is the single entry point for
-// MCP tool handlers — handlers must never call Vault directly.
+// delegating to the underlying Vault port. It is the single entry point for
+// MCP tool handlers — handlers must never call a Vault directly.
 type NoteService struct {
-	vault domain.Vault
+	vault ports.Vault
 }
 
 // NewService wraps a Vault with NoteRef validation.
-func NewService(v domain.Vault) *NoteService {
+func NewService(v ports.Vault) *NoteService {
 	return &NoteService{vault: v}
 }
 
@@ -158,27 +161,15 @@ func relatedScore(target domain.Note, candidate domain.NoteSummary) float64 {
 }
 
 func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
-	lv, ok := s.vault.(*LocalVault)
-	if !ok {
-		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
-	}
-	return lv.CreateBatch(ctx, inputs)
+	return s.vault.CreateBatch(ctx, inputs)
 }
 
 func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
-	lv, ok := s.vault.(*LocalVault)
-	if !ok {
-		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
-	}
-	return lv.UpdateBodyBatch(ctx, items)
+	return s.vault.UpdateBodyBatch(ctx, items)
 }
 
 func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
-	lv, ok := s.vault.(*LocalVault)
-	if !ok {
-		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
-	}
-	return lv.PatchFrontMatterBatch(ctx, items)
+	return s.vault.PatchFrontMatterBatch(ctx, items)
 }
 
 // normalizeRef validates the scope against the vault and normalizes the path.
@@ -190,8 +181,6 @@ func (s *NoteService) normalizeRef(ref domain.NoteRef) (domain.NormalizedPath, e
 	return s.normalizePath(ref.Path)
 }
 
-// normalizePath validates a vault-relative path without a symlink check (handler layer concern).
-// vault root is embedded in LocalVault; NoteService omits it so the check is skipped here.
 func (s *NoteService) normalizePath(path string) (domain.NormalizedPath, error) {
 	return domain.Normalize("", path, s.vault.Capabilities().CaseSensitive)
 }

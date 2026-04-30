@@ -15,7 +15,7 @@ func TestCategoryFromPath(t *testing.T) {
 		{"areas/work.md", Areas, true},
 		{"resources/aws.md", Resources, true},
 		{"archives/old.md", Archives, true},
-		{"Projects/Foo.md", Projects, true}, // case-insensitive first segment
+		{"Projects/Foo.md", Projects, true},
 		{"random/foo.md", "", false},
 		{"foo.md", "", false},
 		{"", "", false},
@@ -81,7 +81,6 @@ func TestNormalizeTag(t *testing.T) {
 }
 
 func TestNormalizeTag_CollapseRuns(t *testing.T) {
-	// "spaces  everywhere" has two spaces between words -> one '-' (run collapsed)
 	got, err := NormalizeTag("spaces  everywhere")
 	if err != nil {
 		t.Fatal(err)
@@ -103,8 +102,8 @@ func TestNormalizeScopeID(t *testing.T) {
 		{"TEAM-Platform", "team-platform", false},
 		{" team-platform ", "team-platform", false},
 		{"", "", true},
-		{"team platform", "", true}, // space not allowed
-		{"team@platform", "", true}, // @ not allowed
+		{"team platform", "", true},
+		{"team@platform", "", true},
 		{strings.Repeat("a", 65), "", true},
 		{strings.Repeat("a", 64), strings.Repeat("a", 64), false},
 	}

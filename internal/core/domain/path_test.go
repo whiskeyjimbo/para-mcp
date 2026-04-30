@@ -76,9 +76,8 @@ func TestNormalize_RejectsNonPARARoot(t *testing.T) {
 }
 
 func TestNormalize_NFCNormalization(t *testing.T) {
-	// NFD-decomposed "é" (e + combining acute) should normalize to NFC "é".
-	nfd := "projects/café.md" // NFD: e + combining acute
-	nfc := "projects/café.md"  // NFC: é
+	nfd := "projects/café.md"
+	nfc := "projects/café.md"
 
 	gotNFD, err := Normalize("", nfd, true)
 	if err != nil {
@@ -117,7 +116,6 @@ func TestNormalize_IndexKeyCaseInsensitive(t *testing.T) {
 }
 
 func TestNormalize_CategoryCaseInsensitiveFirstSeg(t *testing.T) {
-	// "Projects/Foo.md" — first segment capitalized — should still be valid.
 	got, err := Normalize("", "Projects/Foo.md", true)
 	if err != nil {
 		t.Fatalf("Normalize(%q): unexpected error: %v", "Projects/Foo.md", err)
@@ -128,7 +126,6 @@ func TestNormalize_CategoryCaseInsensitiveFirstSeg(t *testing.T) {
 }
 
 func TestNormalize_SymlinkOutsideVault(t *testing.T) {
-	// Create a temp vault with a symlink pointing outside.
 	vault := t.TempDir()
 	outsideTarget := t.TempDir()
 
@@ -136,7 +133,6 @@ func TestNormalize_SymlinkOutsideVault(t *testing.T) {
 	if err := os.Mkdir(projDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Create a symlink: vault/projects/evil.md -> /outside/evil.md
 	evilFile := filepath.Join(outsideTarget, "evil.md")
 	if err := os.WriteFile(evilFile, []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
@@ -153,7 +149,6 @@ func TestNormalize_SymlinkOutsideVault(t *testing.T) {
 }
 
 func TestNormalize_SymlinkInsideVault(t *testing.T) {
-	// A symlink within the vault is fine.
 	vault := t.TempDir()
 	projDir := filepath.Join(vault, "projects")
 	if err := os.Mkdir(projDir, 0o755); err != nil {
@@ -176,7 +171,6 @@ func TestNormalize_SymlinkInsideVault(t *testing.T) {
 
 func TestNormalize_NonExistentPathSkipsSymlinkCheck(t *testing.T) {
 	vault := t.TempDir()
-	// File doesn't exist yet — should not error on the symlink check.
 	_, err := Normalize(vault, "projects/new-note.md", true)
 	if err != nil {
 		t.Fatalf("non-existent path should not error: %v", err)

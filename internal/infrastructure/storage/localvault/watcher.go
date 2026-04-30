@@ -1,4 +1,4 @@
-package vault
+package localvault
 
 import (
 	"log/slog"
@@ -11,23 +11,21 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/whiskeyjimbo/paras/internal/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
 const defaultRescanInterval = 60 * time.Second
-
-// renamePairWindow is how long we wait to pair a REMOVE with a CREATE (rename).
 const renamePairWindow = 50 * time.Millisecond
 
 var conflictPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i) \(.*conflicted copy.*\)`), // Dropbox
-	regexp.MustCompile(`(?i)\.sync-conflict-`),         // Syncthing
-	regexp.MustCompile(`(?i) \(Google Docs\)`),         // Google Drive
-	regexp.MustCompile(`(?i)~\$`),                      // MS Office temp
-	regexp.MustCompile(`(?i)\.~lock\.`),                // LibreOffice lock
-	regexp.MustCompile(`(?i)\.DS_Store$`),              // macOS
-	regexp.MustCompile(`(?i)\.dropbox$`),               // Dropbox metadata
-	regexp.MustCompile(`(?i)desktop\.ini$`),            // Windows
+	regexp.MustCompile(`(?i) \(.*conflicted copy.*\)`),
+	regexp.MustCompile(`(?i)\.sync-conflict-`),
+	regexp.MustCompile(`(?i) \(Google Docs\)`),
+	regexp.MustCompile(`(?i)~\$`),
+	regexp.MustCompile(`(?i)\.~lock\.`),
+	regexp.MustCompile(`(?i)\.DS_Store$`),
+	regexp.MustCompile(`(?i)\.dropbox$`),
+	regexp.MustCompile(`(?i)desktop\.ini$`),
 }
 
 func isConflictFile(name string) bool {
@@ -46,10 +44,9 @@ type watcher struct {
 	done          chan struct{}
 	wg            sync.WaitGroup
 	syncConflicts atomic.Int64
-	watcherStatus atomic.Value // string: "ok" | "limit_exceeded"
-	rescanActive  atomic.Bool  // guards against concurrent periodic rescans
+	watcherStatus atomic.Value
+	rescanActive  atomic.Bool
 
-	// pending removes for rename-pair debounce: path -> deadline
 	pendingMu sync.Mutex
 	pending   map[string]time.Time
 }
@@ -64,8 +61,6 @@ func newWatcher(v *LocalVault) *watcher {
 	return w
 }
 
-// start initializes fsnotify and begins the event loop. Falls back to rescan-only
-// if inotify limits are exceeded.
 func (w *watcher) start() {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -126,8 +121,6 @@ func (w *watcher) loop() {
 		case <-w.done:
 			return
 		case <-w.ticker.C:
-			// Run in a separate goroutine so a slow scan doesn't block event handling.
-			// rescanActive prevents goroutine accumulation if scans take longer than the tick.
 			if w.rescanActive.CompareAndSwap(false, true) {
 				go func() {
 					defer w.rescanActive.Store(false)
@@ -181,7 +174,6 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 				w.fw.Add(name) //nolint:errcheck
 			}
 		}
-		// Check if this CREATE pairs with a pending REMOVE (rename).
 		w.pendingMu.Lock()
 		var pairedOld string
 		for old, deadline := range w.pending {
@@ -209,8 +201,6 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 		_, alreadyPending := w.pending[name]
 		w.pending[name] = time.Now().Add(renamePairWindow)
 		w.pendingMu.Unlock()
-		// Only spawn one AfterFunc per path; if a timer is already running it will
-		// find the updated deadline and handle it.
 		if !alreadyPending {
 			time.AfterFunc(renamePairWindow, func() {
 				select {
@@ -232,8 +222,6 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 	}
 }
 
-// absToNP converts an absolute path to a NormalizedPath. Returns false for
-// non-markdown files or paths outside/unrecognized by the vault.
 func (w *watcher) absToNP(absPath string) (domain.NormalizedPath, bool) {
 	if !isMDFile(absPath) {
 		return domain.NormalizedPath{}, false
@@ -300,13 +288,10 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 	w.vault.idx.Add(summaryToDoc(s, note.Body))
 }
 
-// isSameBase is a heuristic to pair REMOVE+CREATE events from atomic saves —
-// editors often write to a temp file then rename to the target.
 func isSameBase(old, new string) bool {
 	return strings.EqualFold(filepath.Base(old), filepath.Base(new))
 }
 
-// resolveCanonicalSibling returns empty string if no conflict suffix is recognized.
 func resolveCanonicalSibling(conflictPath string) string {
 	dir := filepath.Dir(conflictPath)
 	base := filepath.Base(conflictPath)

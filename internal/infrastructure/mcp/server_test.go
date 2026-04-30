@@ -5,15 +5,17 @@ import (
 	"testing"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/whiskeyjimbo/paras/internal/domain"
-	"github.com/whiskeyjimbo/paras/internal/index"
-	"github.com/whiskeyjimbo/paras/internal/vault"
+	"github.com/whiskeyjimbo/paras/internal/application"
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
 
-// scopeRecorder is a domain.Vault stub that records the AllowedScopes
+// scopeRecorder is a ports.Vault stub that records the AllowedScopes
 // received on Query and Search calls. Unimplemented methods panic.
 type scopeRecorder struct {
-	domain.Vault // satisfies interface; unimplemented methods panic
+	ports.Vault
 	queryScopes  []domain.ScopeID
 	searchScopes []domain.ScopeID
 }
@@ -37,14 +39,14 @@ func (r *scopeRecorder) Search(_ context.Context, _ string, f domain.Filter, _ i
 	return nil, nil
 }
 
-func newTestService(t *testing.T) *vault.NoteService {
+func newTestService(t *testing.T) *application.NoteService {
 	t.Helper()
-	v, err := vault.New("personal", t.TempDir(), index.Config{})
+	v, err := localvault.New("personal", t.TempDir(), index.Config{})
 	if err != nil {
-		t.Fatalf("vault.New: %v", err)
+		t.Fatalf("localvault.New: %v", err)
 	}
 	t.Cleanup(v.Close)
-	return vault.NewService(v)
+	return application.NewService(v)
 }
 
 func emptyListReq() mcplib.CallToolRequest {
@@ -57,7 +59,6 @@ func searchReq(text string) mcplib.CallToolRequest {
 	return req
 }
 
-// TestPersonalOnly verifies the Phase 1 default resolver returns ["personal"].
 func TestPersonalOnly(t *testing.T) {
 	got := personalOnly(context.Background())
 	if len(got) != 1 || got[0] != "personal" {
@@ -65,27 +66,21 @@ func TestPersonalOnly(t *testing.T) {
 	}
 }
 
-// TestBuildNilScopesFnInstallsPersonalOnly verifies that passing nil to Build
-// installs the personal-only resolver rather than leaving scopes nil.
 func TestBuildNilScopesFnInstallsPersonalOnly(t *testing.T) {
 	svc := newTestService(t)
 	s := Build(svc, nil)
 	if s == nil {
 		t.Fatal("Build returned nil")
 	}
-	// The server was built without panic; verify by calling personalOnly directly
-	// (the nil guard logic is the same code path Build uses).
 	got := personalOnly(context.Background())
 	if len(got) == 0 {
 		t.Fatal("fallback resolver returned empty scopes")
 	}
 }
 
-// TestScopesFuncFlowsIntoNotesList verifies that the ScopesFunc result is
-// placed in Filter.AllowedScopes when notesList runs.
 func TestScopesFuncFlowsIntoNotesList(t *testing.T) {
 	rec := &scopeRecorder{}
-	svc := vault.NewService(rec)
+	svc := application.NewService(rec)
 
 	want := []domain.ScopeID{"personal", "team-eng"}
 	h := &handlers{
@@ -106,10 +101,9 @@ func TestScopesFuncFlowsIntoNotesList(t *testing.T) {
 	}
 }
 
-// TestScopesFuncFlowsIntoNotesSearch verifies the same for notesSearch.
 func TestScopesFuncFlowsIntoNotesSearch(t *testing.T) {
 	rec := &scopeRecorder{}
-	svc := vault.NewService(rec)
+	svc := application.NewService(rec)
 
 	want := []domain.ScopeID{"personal"}
 	h := &handlers{
@@ -130,15 +124,12 @@ func TestScopesFuncFlowsIntoNotesSearch(t *testing.T) {
 	}
 }
 
-// TestDenyAllScopesFuncExcludesVault verifies that an empty ScopesFunc result
-// (the deny-all sentinel) causes notesList to return zero notes.
 func TestDenyAllScopesFuncExcludesVault(t *testing.T) {
-	// Use a real vault so we can verify the deny-all path through real filter logic.
 	svc := newTestService(t)
 	h := &handlers{
 		svc: svc,
 		scopes: func(_ context.Context) []domain.ScopeID {
-			return []domain.ScopeID{} // deny all
+			return []domain.ScopeID{}
 		},
 	}
 
@@ -150,8 +141,5 @@ func TestDenyAllScopesFuncExcludesVault(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("notesList returned error result: %v", result)
 	}
-	// The vault scope "personal" is not in AllowedScopes, so no notes returned.
-	// The response is a JSON-encoded QueryResult with Notes: null/[].
-	// A deny-all result silently returns an empty set (not an error).
-	_ = result // result content checked via rec in other tests; here we just verify no panic/error
+	_ = result
 }
