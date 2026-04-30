@@ -308,6 +308,9 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return toolErr(err), nil
 	}
+	if results == nil {
+		results = []domain.RankedNote{}
+	}
 	return jsonResult(results)
 }
 
