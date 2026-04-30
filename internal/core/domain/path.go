@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -20,27 +19,27 @@ type NormalizedPath struct {
 // Normalize validates a vault-relative path and returns its canonical forms.
 func Normalize(path string, caseSensitive bool) (NormalizedPath, error) {
 	if strings.ContainsRune(path, 0) {
-		return NormalizedPath{}, errors.New("path contains null byte")
+		return NormalizedPath{}, fmt.Errorf("%w: path contains null byte", ErrInvalidPath)
 	}
 	if strings.ContainsRune(path, '\\') {
-		return NormalizedPath{}, errors.New("path contains backslash")
+		return NormalizedPath{}, fmt.Errorf("%w: path contains backslash", ErrInvalidPath)
 	}
 	if filepath.IsAbs(path) {
-		return NormalizedPath{}, errors.New("path must be relative")
+		return NormalizedPath{}, fmt.Errorf("%w: path must be relative", ErrInvalidPath)
 	}
 
 	path = norm.NFC.String(path)
 
 	cleaned := filepath.ToSlash(filepath.Clean(path))
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return NormalizedPath{}, errors.New("path traverses above vault root")
+		return NormalizedPath{}, fmt.Errorf("%w: path traverses above vault root", ErrInvalidPath)
 	}
 
 	seg, _, _ := strings.Cut(cleaned, "/")
 	switch strings.ToLower(seg) {
 	case "projects", "areas", "resources", "archives", ".trash":
 	default:
-		return NormalizedPath{}, fmt.Errorf("path must begin with a PARA category (projects|areas|resources|archives|.trash), got %q", seg)
+		return NormalizedPath{}, fmt.Errorf("%w: path must begin with a PARA category (projects|areas|resources|archives|.trash), got %q", ErrInvalidPath, seg)
 	}
 
 	indexKey := cleaned

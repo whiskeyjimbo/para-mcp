@@ -5,10 +5,13 @@ import (
 	"time"
 )
 
-// Sentinel errors returned by Vault implementations.
+// Sentinel errors returned by domain validation and Vault implementations.
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict: note has been modified")
+	ErrNotFound           = errors.New("not found")
+	ErrConflict           = errors.New("conflict: note has been modified")
+	ErrInvalidPath        = errors.New("invalid path")
+	ErrInvalidFrontMatter = errors.New("invalid frontmatter")
+	ErrScopeForbidden     = errors.New("scope not permitted")
 )
 
 // SearchMode selects the retrieval strategy.

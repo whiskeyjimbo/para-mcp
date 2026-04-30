@@ -279,7 +279,7 @@ func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.
 // In Phase 3, scope routing moves to VaultRegistry; NoteService becomes single-vault.
 func (s *NoteService) normalizeRef(ref domain.NoteRef) (domain.NormalizedPath, error) {
 	if ref.Scope != "" && ref.Scope != string(s.vault.Scope()) {
-		return domain.NormalizedPath{}, fmt.Errorf("%w: scope %q", domain.ErrNotFound, ref.Scope)
+		return domain.NormalizedPath{}, fmt.Errorf("%w: scope %q", domain.ErrScopeForbidden, ref.Scope)
 	}
 	return s.normalizePath(ref.Path)
 }

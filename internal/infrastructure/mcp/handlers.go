@@ -417,6 +417,12 @@ func toolErr(err error) *mcplib.CallToolResult {
 		return mcplib.NewToolResultError("not_found: " + err.Error())
 	case errors.Is(err, domain.ErrConflict):
 		return mcplib.NewToolResultError("conflict: " + err.Error())
+	case errors.Is(err, domain.ErrInvalidPath):
+		return mcplib.NewToolResultError("invalid_path: " + err.Error())
+	case errors.Is(err, domain.ErrInvalidFrontMatter):
+		return mcplib.NewToolResultError("invalid_frontmatter: " + err.Error())
+	case errors.Is(err, domain.ErrScopeForbidden):
+		return mcplib.NewToolResultError("scope_forbidden: " + err.Error())
 	default:
 		return mcplib.NewToolResultError(err.Error())
 	}
