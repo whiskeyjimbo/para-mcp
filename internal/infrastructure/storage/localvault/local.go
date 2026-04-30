@@ -60,10 +60,9 @@ type LocalVault struct {
 	idx    index.FTSIndex
 	w      *watcher
 
-	mu        sync.RWMutex
-	notes     map[string]domain.NoteSummary
-	outLinks  map[string][]outLink
-	backlinks map[string][]backlinkSrc
+	mu    sync.RWMutex
+	notes map[string]domain.NoteSummary
+	graph *BacklinkGraph
 }
 
 // New creates a LocalVault rooted at root with the given scope.
@@ -90,8 +89,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		actors:    actor.New(),
 		idx:       fts,
 		notes:     make(map[string]domain.NoteSummary),
-		outLinks:  make(map[string][]outLink),
-		backlinks: make(map[string][]backlinkSrc),
+		graph:     newBacklinkGraph(),
 		templates: cfg.templates,
 		caps: domain.Capabilities{
 			Writable:      true,
@@ -282,7 +280,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 			return err
 		}
 		summary = v.noteToSummary(note)
-		existingLinks := v.getLinksLocked(np.Storage)
+		existingLinks := v.graph.Links(np.Storage)
 		v.upsertWithLinks(np.IndexKey, np.Storage, summary, existingLinks)
 		return nil
 	})
@@ -319,10 +317,10 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 		links := parseLinks(note.Body)
 		v.mu.Lock()
 		delete(v.notes, np.IndexKey)
-		v.removeLinkIndexLocked(np.Storage)
 		v.notes[nnp.IndexKey] = summary
-		v.addLinkIndexLocked(nnp.Storage, links)
 		v.mu.Unlock()
+		v.graph.Remove(np.Storage)
+		v.graph.Upsert(nnp.Storage, links)
 		v.idx.Remove(domain.NoteRef{Scope: v.scope, Path: np.Storage})
 		v.idx.Add(summaryToDoc(summary, note.Body))
 		return nil
@@ -435,7 +433,7 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	for _, key := range keys {
-		for _, src := range v.backlinks[key] {
+		for _, src := range v.graph.Backlinks(key) {
 			if !includeAssets && src.isAsset {
 				continue
 			}
@@ -639,59 +637,16 @@ func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
 func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
 	v.mu.Lock()
 	v.notes[indexKey] = s
-	v.removeLinkIndexLocked(storagePath)
-	v.addLinkIndexLocked(storagePath, links)
 	v.mu.Unlock()
-}
-
-func (v *LocalVault) removeLinkIndexLocked(storagePath string) {
-	old, ok := v.outLinks[storagePath]
-	if !ok {
-		return
-	}
-	for _, link := range old {
-		srcs := v.backlinks[link.targetKey]
-		out := srcs[:0]
-		for _, s := range srcs {
-			if s.path != storagePath {
-				out = append(out, s)
-			}
-		}
-		if len(out) == 0 {
-			delete(v.backlinks, link.targetKey)
-		} else {
-			v.backlinks[link.targetKey] = out
-		}
-	}
-	delete(v.outLinks, storagePath)
-}
-
-func (v *LocalVault) addLinkIndexLocked(storagePath string, links []outLink) {
-	if len(links) == 0 {
-		return
-	}
-	v.outLinks[storagePath] = links
-	for _, link := range links {
-		v.backlinks[link.targetKey] = append(v.backlinks[link.targetKey], backlinkSrc{
-			path:    storagePath,
-			isAsset: link.isAsset,
-		})
-	}
-}
-
-func (v *LocalVault) getLinksLocked(storagePath string) []outLink {
-	v.mu.RLock()
-	links := v.outLinks[storagePath]
-	v.mu.RUnlock()
-	return links
+	v.graph.Upsert(storagePath, links)
 }
 
 func (v *LocalVault) removeNoteFromAllIndexes(indexKey, storagePath string) {
 	ref := domain.NoteRef{Scope: v.scope, Path: storagePath}
 	v.mu.Lock()
 	delete(v.notes, indexKey)
-	v.removeLinkIndexLocked(storagePath)
 	v.mu.Unlock()
+	v.graph.Remove(storagePath)
 	v.idx.Remove(ref)
 }
 
