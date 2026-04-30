@@ -67,10 +67,10 @@ type docMeta struct {
 }
 
 type snapshot struct {
-	postings  map[string]map[string]posting // term -> docKey -> posting
-	docs      map[string]docMeta            // docKey -> meta
-	avgBody   float64
-	avgTitle  float64
+	postings map[string]map[string]posting // term -> docKey -> posting
+	docs     map[string]docMeta            // docKey -> meta
+	avgBody  float64
+	avgTitle float64
 }
 
 type writeOp struct {
@@ -81,11 +81,11 @@ type writeOp struct {
 
 // Index is a BM25 full-text index.
 type Index struct {
-	cfg      Config
-	ch       chan writeOp
-	snap     atomic.Pointer[snapshot]
+	cfg       Config
+	ch        chan writeOp
+	snap      atomic.Pointer[snapshot]
 	stopWords map[string]bool
-	done     chan struct{}
+	done      chan struct{}
 }
 
 // New creates and starts a new Index with the given configuration.
