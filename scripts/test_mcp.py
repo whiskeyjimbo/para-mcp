@@ -30,6 +30,11 @@ _id = 0
 failures = 0
 verbose = False
 
+_section_name = ""
+_section_pass = 0
+_section_fail = 0
+_section_start = 0.0
+
 
 def next_id():
     global _id
@@ -40,6 +45,23 @@ def next_id():
 def vprint(*args, **kwargs):
     if verbose:
         print(*args, **kwargs)
+
+
+def _flush_section():
+    global _section_name, _section_pass, _section_fail
+    if not _section_name or verbose:
+        return
+    total = _section_pass + _section_fail
+    elapsed = time.time() - _section_start
+    marks = ""
+    if _section_fail:
+        marks = f"  {FAIL} {_section_fail}/{total} failed"
+    else:
+        marks = f"  {PASS} {total}/{total}"
+    print(f"  {DIM}{elapsed*1000:.0f}ms{RESET}{marks}")
+    _section_name = ""
+    _section_pass = 0
+    _section_fail = 0
 
 
 class MCPClient:
@@ -153,13 +175,15 @@ def parse_json(text: str):
 
 
 def check(label: str, cond: bool, detail: str = ""):
-    global failures
+    global failures, _section_pass, _section_fail
     if cond:
+        _section_pass += 1
         if verbose:
             print(f"  {PASS} {label}")
     else:
-        print(f"  {FAIL} {label}" + (f": {DIM}{detail}{RESET}" if detail else ""))
+        _section_fail += 1
         failures += 1
+        print(f"  {FAIL} {label}" + (f": {DIM}{detail}{RESET}" if detail else ""))
 
 
 def check_ok(label: str, resp: dict) -> tuple[bool, str]:
@@ -179,12 +203,16 @@ def check_err(label: str, resp: dict, contains: str = "") -> str:
 
 
 def section(name: str):
+    global _section_name, _section_start
+    _flush_section()
+    _section_name = name
+    _section_start = time.time()
     if verbose:
         print(f"\n{YELLOW}{'─' * 50}{RESET}")
         print(f"{YELLOW}  {name}{RESET}")
         print(f"{YELLOW}{'─' * 50}{RESET}")
     else:
-        print(f"\n[{name}]")
+        print(f"\n{CYAN}{name}{RESET}", end="", flush=True)
 
 
 # ============================================================
@@ -424,6 +452,7 @@ def main():
                 except FileNotFoundError:
                     pass
 
+    _flush_section()
     print()
     if failures == 0:
         print(f"{PASS} All assertions passed")
