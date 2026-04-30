@@ -179,8 +179,12 @@ func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 }
 
 func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error) {
-	if _, err := s.checkScopes(allowedScopes); err != nil {
+	ok, err := s.checkScopes(allowedScopes)
+	if err != nil {
 		return domain.QueryResult{}, err
+	}
+	if !ok {
+		return domain.QueryResult{}, nil
 	}
 	cutoff := s.clock().AddDate(0, 0, -days)
 	return s.Query(ctx, domain.QueryRequest{
