@@ -55,15 +55,14 @@ type watcher struct {
 	watcherStatus atomic.Value
 	rescanActive  atomic.Bool
 
-	pendingMu sync.Mutex
-	pending   map[string]time.Time
+	renames *renamePairTracker
 }
 
 func newWatcher(v VaultIndexer) *watcher {
 	w := &watcher{
 		v:       v,
 		done:    make(chan struct{}),
-		pending: make(map[string]time.Time),
+		renames: newRenamePairTracker(renamePairWindow),
 	}
 	w.watcherStatus.Store("ok")
 	return w
@@ -182,20 +181,7 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 				w.fw.Add(name) //nolint:errcheck
 			}
 		}
-		w.pendingMu.Lock()
-		var pairedOld string
-		for old, deadline := range w.pending {
-			if time.Now().Before(deadline) && isSameBase(old, name) {
-				pairedOld = old
-				break
-			}
-		}
-		if pairedOld != "" {
-			delete(w.pending, pairedOld)
-		}
-		w.pendingMu.Unlock()
-
-		if pairedOld != "" {
+		if pairedOld := w.renames.FindPairedRemoval(name); pairedOld != "" {
 			w.handleRename(pairedOld, name)
 		} else {
 			w.reindexFile(name)
@@ -205,24 +191,14 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 		w.reindexFile(name)
 
 	case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
-		w.pendingMu.Lock()
-		_, alreadyPending := w.pending[name]
-		w.pending[name] = time.Now().Add(renamePairWindow)
-		w.pendingMu.Unlock()
-		if !alreadyPending {
+		if !w.renames.MarkRemoved(name) {
 			time.AfterFunc(renamePairWindow, func() {
 				select {
 				case <-w.done:
 					return
 				default:
 				}
-				w.pendingMu.Lock()
-				_, stillPending := w.pending[name]
-				if stillPending {
-					delete(w.pending, name)
-				}
-				w.pendingMu.Unlock()
-				if stillPending {
+				if w.renames.ClaimIfPending(name) {
 					w.removeFromIndex(name)
 				}
 			})
