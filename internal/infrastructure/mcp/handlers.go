@@ -19,7 +19,7 @@ const (
 
 type handlers struct {
 	svc    ports.NoteService
-	scopes ScopesFunc
+	scopes ports.ScopeResolver
 	clock  func() time.Time
 }
 
@@ -162,7 +162,7 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 			domain.WithTags(req.GetStringSlice("tags", nil)...),
 			domain.WithCategories(cats...),
 		),
-		AllowedScopes: h.scopes(ctx),
+		AllowedScopes: h.scopes.Scopes(ctx),
 		Sort:          domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
 		Desc:          req.GetBool("desc", false),
 		Limit:         req.GetInt("limit", defaultListLimit),
@@ -179,7 +179,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes(ctx)}, req.GetInt("limit", defaultSearchLimit))
+	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)}, req.GetInt("limit", defaultSearchLimit))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -203,7 +203,7 @@ func (h *handlers) notesBacklinks(ctx context.Context, req mcplib.CallToolReques
 		return errResult, nil
 	}
 	entries, err := h.svc.Backlinks(ctx, ref, req.GetBool("include_assets", false),
-		domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
+		domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -218,7 +218,7 @@ func (h *handlers) notesRelated(ctx context.Context, req mcplib.CallToolRequest)
 	if errResult != nil {
 		return errResult, nil
 	}
-	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", defaultSearchLimit), domain.AuthFilter{AllowedScopes: h.scopes(ctx)})
+	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", defaultSearchLimit), domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -244,7 +244,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 			domain.WithUpdatedBefore(cutoff),
 			domain.WithCategories(cats...),
 		),
-		AllowedScopes: h.scopes(ctx),
+		AllowedScopes: h.scopes.Scopes(ctx),
 		Sort:          domain.SortByUpdated,
 		Desc:          false,
 		Limit:         req.GetInt("limit", defaultListLimit),
@@ -306,7 +306,7 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 		}
 		inputs = append(inputs, in)
 	}
-	result, err := h.svc.CreateBatch(ctx, inputs, h.scopes(ctx))
+	result, err := h.svc.CreateBatch(ctx, inputs, h.scopes.Scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -338,7 +338,7 @@ func (h *handlers) notesUpdateBatch(ctx context.Context, req mcplib.CallToolRequ
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.UpdateBodyBatch(ctx, inputs, h.scopes(ctx))
+	result, err := h.svc.UpdateBodyBatch(ctx, inputs, h.scopes.Scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -374,7 +374,7 @@ func (h *handlers) notesPatchFrontMatterBatch(ctx context.Context, req mcplib.Ca
 			IfMatch: stringVal(obj, "if_match"),
 		})
 	}
-	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, h.scopes(ctx))
+	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, h.scopes.Scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}

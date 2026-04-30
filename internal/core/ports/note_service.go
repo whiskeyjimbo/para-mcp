@@ -6,6 +6,19 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
+// ScopeResolver resolves the permitted scopes for a request.
+// Implementations may derive scopes from context (middleware-injected JWT,
+// session token), from static config, or from any other source.
+type ScopeResolver interface {
+	Scopes(ctx context.Context) []domain.ScopeID
+}
+
+// ScopesFunc is a function that implements ScopeResolver, allowing
+// an inline func to be used wherever a ScopeResolver is required.
+type ScopesFunc func(ctx context.Context) []domain.ScopeID
+
+func (f ScopesFunc) Scopes(ctx context.Context) []domain.ScopeID { return f(ctx) }
+
 // NoteReader is the read-only slice of the NoteService port.
 type NoteReader interface {
 	Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error)

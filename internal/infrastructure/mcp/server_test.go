@@ -60,9 +60,9 @@ func searchReq(text string) mcplib.CallToolRequest {
 }
 
 func TestPersonalOnly(t *testing.T) {
-	got := personalOnly(context.Background())
+	got := personalOnly.Scopes(context.Background())
 	if len(got) != 1 || got[0] != "personal" {
-		t.Fatalf("personalOnly() = %v, want [personal]", got)
+		t.Fatalf("personalOnly.Scopes() = %v, want [personal]", got)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestBuildDefaultScopesFnInstallsPersonalOnly(t *testing.T) {
 	if s == nil {
 		t.Fatal("Build returned nil")
 	}
-	got := personalOnly(context.Background())
+	got := personalOnly.Scopes(context.Background())
 	if len(got) == 0 {
 		t.Fatal("fallback resolver returned empty scopes")
 	}
@@ -84,7 +84,7 @@ func TestScopesFuncFlowsIntoNotesList(t *testing.T) {
 
 	h := &handlers{
 		svc:    svc,
-		scopes: func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal", "team-eng"} },
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal", "team-eng"} }),
 	}
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func TestScopesFuncFlowsIntoNotesSearch(t *testing.T) {
 
 	h := &handlers{
 		svc:    svc,
-		scopes: func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} },
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
 	}
 
 	ctx := context.Background()
@@ -127,7 +127,7 @@ func TestWithClockInjectedIntoNotesStale(t *testing.T) {
 	fixed := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	h := &handlers{
 		svc:    svc,
-		scopes: func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} },
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
 		clock:  func() time.Time { return fixed },
 	}
 	req := mcplib.CallToolRequest{}
@@ -145,9 +145,9 @@ func TestDenyAllScopesFuncExcludesVault(t *testing.T) {
 	svc := newTestService(t)
 	h := &handlers{
 		svc: svc,
-		scopes: func(_ context.Context) []domain.ScopeID {
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 			return []domain.ScopeID{}
-		},
+		}),
 	}
 
 	ctx := context.Background()

@@ -10,22 +10,24 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
-// ScopesFunc resolves the permitted scopes for a request.
-type ScopesFunc func(ctx context.Context) []domain.ScopeID
-
 // Option configures a Build call.
 type Option func(*buildConfig)
 
 type buildConfig struct {
-	scopesFn      ScopesFunc
+	scopes        ports.ScopeResolver
 	serverName    string
 	serverVersion string
 	clock         func() time.Time
 }
 
-// WithScopesFunc sets the scope resolver (default: personal only).
-func WithScopesFunc(fn ScopesFunc) Option {
-	return func(c *buildConfig) { c.scopesFn = fn }
+// WithScopeResolver sets the scope resolver (default: personal only).
+func WithScopeResolver(r ports.ScopeResolver) Option {
+	return func(c *buildConfig) { c.scopes = r }
+}
+
+// WithScopesFunc is a convenience wrapper that adapts a function to ScopeResolver.
+func WithScopesFunc(fn func(context.Context) []domain.ScopeID) Option {
+	return WithScopeResolver(ports.ScopesFunc(fn))
 }
 
 // WithServerName overrides the MCP server name (default: "paras").
@@ -43,14 +45,14 @@ func WithClock(fn func() time.Time) Option {
 	return func(c *buildConfig) { c.clock = fn }
 }
 
-func personalOnly(_ context.Context) []domain.ScopeID {
+var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
-}
+})
 
 // Build constructs and returns an MCPServer wired to svc.
 func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	cfg := buildConfig{
-		scopesFn:      personalOnly,
+		scopes:        personalOnly,
 		serverName:    "paras",
 		serverVersion: "0.1.0",
 		clock:         time.Now,
@@ -65,7 +67,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: cfg.scopesFn, clock: cfg.clock}
+	h := &handlers{svc: svc, scopes: cfg.scopes, clock: cfg.clock}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
