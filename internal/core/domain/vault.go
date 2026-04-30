@@ -47,6 +47,22 @@ type CreateInput struct {
 	Body        string
 }
 
+// NewFrontMatter constructs a FrontMatter with normalized tags.
+func NewFrontMatter(title, status, area, project string, tags []string) FrontMatter {
+	return FrontMatter{
+		Title:   title,
+		Status:  status,
+		Area:    area,
+		Project: project,
+		Tags:    NormalizeTags(tags),
+	}
+}
+
+// NewCreateInput constructs a CreateInput with normalized frontmatter.
+func NewCreateInput(path string, fm FrontMatter, body string) CreateInput {
+	return CreateInput{Path: path, FrontMatter: fm, Body: body}
+}
+
 // Filter narrows query and search results by note content fields.
 // It carries no authorization state — use AuthFilter at the service boundary.
 type Filter struct {

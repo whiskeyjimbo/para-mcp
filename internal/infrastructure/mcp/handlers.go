@@ -50,17 +50,17 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	in := domain.CreateInput{
-		Path: path,
-		FrontMatter: domain.FrontMatter{
-			Title:   req.GetString("title", ""),
-			Status:  req.GetString("status", ""),
-			Area:    req.GetString("area", ""),
-			Project: req.GetString("project", ""),
-			Tags:    req.GetStringSlice("tags", nil),
-		},
-		Body: req.GetString("body", ""),
-	}
+	in := domain.NewCreateInput(
+		path,
+		domain.NewFrontMatter(
+			req.GetString("title", ""),
+			req.GetString("status", ""),
+			req.GetString("area", ""),
+			req.GetString("project", ""),
+			req.GetStringSlice("tags", nil),
+		),
+		req.GetString("body", ""),
+	)
 	res, err := h.svc.Create(ctx, in)
 	if err != nil {
 		return toolErr(err), nil
@@ -280,18 +280,17 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 		if path == "" {
 			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d].path required", i)), nil
 		}
-		in := domain.CreateInput{
-			Path: path,
-			Body: stringVal(obj, "body"),
-			FrontMatter: domain.FrontMatter{
-				Title:   stringVal(obj, "title"),
-				Status:  stringVal(obj, "status"),
-				Area:    stringVal(obj, "area"),
-				Project: stringVal(obj, "project"),
-				Tags:    stringSliceVal(obj, "tags"),
-			},
-		}
-		inputs = append(inputs, in)
+		inputs = append(inputs, domain.NewCreateInput(
+			path,
+			domain.NewFrontMatter(
+				stringVal(obj, "title"),
+				stringVal(obj, "status"),
+				stringVal(obj, "area"),
+				stringVal(obj, "project"),
+				stringSliceVal(obj, "tags"),
+			),
+			stringVal(obj, "body"),
+		))
 	}
 	result, err := h.svc.CreateBatch(ctx, inputs, h.scopes.Scopes(ctx))
 	if err != nil {
