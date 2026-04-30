@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"testing"
+	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/application"
@@ -120,6 +121,25 @@ func TestScopesFuncFlowsIntoNotesSearch(t *testing.T) {
 	}
 	if len(rec.searchScopes) != 1 || rec.searchScopes[0] != "personal" {
 		t.Fatalf("AllowedScopes on Search = %v, want %v", rec.searchScopes, want)
+	}
+}
+
+func TestWithClockInjectedIntoNotesStale(t *testing.T) {
+	svc := newTestService(t)
+	fixed := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	h := &handlers{
+		svc:    svc,
+		scopes: func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} },
+		clock:  func() time.Time { return fixed },
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"days": float64(30)}
+	result, err := h.notesStale(context.Background(), req)
+	if err != nil {
+		t.Fatalf("notesStale: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("notesStale returned error: %v", result)
 	}
 }
 

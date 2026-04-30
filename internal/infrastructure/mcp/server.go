@@ -43,6 +43,7 @@ type buildConfig struct {
 	scopesFn      ScopesFunc
 	serverName    string
 	serverVersion string
+	clock         func() time.Time
 }
 
 // WithScopesFunc sets the scope resolver (default: personal only).
@@ -60,6 +61,11 @@ func WithServerVersion(v string) Option {
 	return func(c *buildConfig) { c.serverVersion = v }
 }
 
+// WithClock overrides the time source used by the stale notes handler (default: time.Now).
+func WithClock(fn func() time.Time) Option {
+	return func(c *buildConfig) { c.clock = fn }
+}
+
 func personalOnly(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 }
@@ -70,6 +76,7 @@ func Build(svc NotePort, opts ...Option) *mcpserver.MCPServer {
 		scopesFn:      personalOnly,
 		serverName:    "paras",
 		serverVersion: "0.1.0",
+		clock:         time.Now,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -81,7 +88,7 @@ func Build(svc NotePort, opts ...Option) *mcpserver.MCPServer {
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: cfg.scopesFn}
+	h := &handlers{svc: svc, scopes: cfg.scopesFn, clock: cfg.clock}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -109,6 +116,7 @@ func Build(svc NotePort, opts ...Option) *mcpserver.MCPServer {
 type handlers struct {
 	svc    NotePort
 	scopes ScopesFunc
+	clock  func() time.Time
 }
 
 func requireNoteRef(req mcplib.CallToolRequest) (domain.NoteRef, *mcplib.CallToolResult) {
@@ -449,7 +457,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	if days <= 0 {
 		return mcplib.NewToolResultError("days must be > 0"), nil
 	}
-	cutoff := timeNow().AddDate(0, 0, -days)
+	cutoff := h.clock().AddDate(0, 0, -days)
 	f := domain.Filter{
 		AllowedScopes: h.scopes(ctx),
 		Status:        req.GetString("status", ""),
@@ -469,8 +477,6 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	}
 	return jsonResult(result)
 }
-
-var timeNow = func() time.Time { return time.Now() }
 
 func toolVaultHealth() mcplib.Tool {
 	return mcplib.NewTool("vault_health",

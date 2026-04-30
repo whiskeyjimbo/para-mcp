@@ -16,12 +16,37 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
 
+// Option configures a LocalVault.
+type Option func(*vaultConfig)
+
+type vaultConfig struct {
+	indexOpts []index.Option
+	templates map[domain.Category]domain.CategoryTemplate
+	clock     func() time.Time
+}
+
+// WithIndexOptions passes options through to the underlying index.
+func WithIndexOptions(opts ...index.Option) Option {
+	return func(c *vaultConfig) { c.indexOpts = append(c.indexOpts, opts...) }
+}
+
+// WithTemplates overrides per-category creation templates (default: domain.DefaultTemplates).
+func WithTemplates(t map[domain.Category]domain.CategoryTemplate) Option {
+	return func(c *vaultConfig) { c.templates = t }
+}
+
+// WithClock overrides the time source for note timestamps (default: time.Now).
+func WithClock(fn func() time.Time) Option {
+	return func(c *vaultConfig) { c.clock = fn }
+}
+
 // LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
 	scope     string
 	root      string
 	caps      domain.Capabilities
 	templates map[domain.Category]domain.CategoryTemplate
+	clock     func() time.Time
 
 	actors *actor.Pool
 	idx    *index.Index
@@ -34,7 +59,14 @@ type LocalVault struct {
 }
 
 // New creates a LocalVault rooted at root with the given scope.
-func New(scope, root string) (*LocalVault, error) {
+func New(scope, root string, opts ...Option) (*LocalVault, error) {
+	cfg := vaultConfig{
+		templates: domain.DefaultTemplates,
+		clock:     time.Now,
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create vault root: %w", err)
 	}
@@ -42,12 +74,13 @@ func New(scope, root string) (*LocalVault, error) {
 	v := &LocalVault{
 		scope:     scope,
 		root:      root,
+		clock:     cfg.clock,
 		actors:    actor.New(),
-		idx:       index.New(),
+		idx:       index.New(cfg.indexOpts...),
 		notes:     make(map[string]domain.NoteSummary),
 		outLinks:  make(map[string][]outLink),
 		backlinks: make(map[string][]backlinkSrc),
-		templates: domain.DefaultTemplates,
+		templates: cfg.templates,
 		caps: domain.Capabilities{
 			Writable:      true,
 			SoftDelete:    true,
@@ -139,7 +172,7 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 				}
 			}
 		}
-		in.FrontMatter.CreatedAt = time.Now().UTC()
+		in.FrontMatter.CreatedAt = v.clock().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
 		in.FrontMatter.Tags = domain.NormalizeTags(in.FrontMatter.Tags)
 		in.FrontMatter.Status = domain.NormalizeStatus(in.FrontMatter.Status)
@@ -192,7 +225,7 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 		if ifMatch != "" && note.ETag != ifMatch {
 			return domain.ErrConflict
 		}
-		note.FrontMatter.UpdatedAt = time.Now().UTC()
+		note.FrontMatter.UpdatedAt = v.clock().UTC()
 		note.Body = body
 		note.ETag = domain.ComputeETag(note.FrontMatter, body)
 		data, err := formatNote(note.FrontMatter, body)
@@ -227,7 +260,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 			return domain.ErrConflict
 		}
 		domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
-		note.FrontMatter.UpdatedAt = time.Now().UTC()
+		note.FrontMatter.UpdatedAt = v.clock().UTC()
 		note.ETag = domain.ComputeETag(note.FrontMatter, note.Body)
 		data, err := formatNote(note.FrontMatter, note.Body)
 		if err != nil {
