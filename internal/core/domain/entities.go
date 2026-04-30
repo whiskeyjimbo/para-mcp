@@ -1,13 +1,8 @@
 package domain
 
 import (
-	"cmp"
-	"fmt"
-	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 // ScopeID is the canonical type for scope identifiers across the API.
@@ -158,41 +153,6 @@ type MutationResult struct {
 	ETag    string
 }
 
-// NormalizeTags applies NormalizeTag to each element, dropping invalid ones.
-func NormalizeTags(tags []string) []string {
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if n, err := NormalizeTag(t); err == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-// NormalizeStatus applies tag normalization rules to a status string.
-// Returns s unchanged if it fails normalization.
-func NormalizeStatus(s string) string {
-	if n, err := NormalizeTag(s); err == nil {
-		return n
-	}
-	return s
-}
-
-// NormalizeTag applies canonical tag normalization at every write boundary.
-func NormalizeTag(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "#")
-	s = strings.ToLower(s)
-	result := strings.Join(strings.FieldsFunc(s, unicode.IsSpace), "-")
-	if result == "" {
-		return "", fmt.Errorf("tag normalizes to empty string")
-	}
-	if utf8.RuneCountInString(result) > 64 {
-		return "", fmt.Errorf("tag exceeds 64 runes after normalization")
-	}
-	return result, nil
-}
-
 // BatchUpdateBodyInput is one item in a notes_update_batch request.
 type BatchUpdateBodyInput struct {
 	Path    string
@@ -228,124 +188,4 @@ type BatchResult struct {
 	Results      []BatchItemResult
 	SuccessCount int
 	FailureCount int
-}
-
-// CategoryTemplate defines default frontmatter applied on note creation.
-type CategoryTemplate struct {
-	Status string
-	Tags   []string
-}
-
-// DefaultTemplates are the built-in per-category creation defaults.
-var DefaultTemplates = map[Category]CategoryTemplate{
-	Projects:  {Status: "active"},
-	Areas:     {},
-	Resources: {},
-	Archives:  {Status: "archived"},
-}
-
-// ApplyFrontMatterPatch applies a partial update to fm from a fields map.
-func ApplyFrontMatterPatch(fm *FrontMatter, fields map[string]any) {
-	for k, v := range fields {
-		switch k {
-		case "title":
-			if s, ok := v.(string); ok {
-				fm.Title = s
-			}
-		case "status":
-			if s, ok := v.(string); ok {
-				fm.Status = NormalizeStatus(s)
-			}
-		case "area":
-			if s, ok := v.(string); ok {
-				fm.Area = s
-			}
-		case "project":
-			if s, ok := v.(string); ok {
-				fm.Project = s
-			}
-		case "tags":
-			switch tv := v.(type) {
-			case []string:
-				fm.Tags = NormalizeTags(tv)
-			case []any:
-				tags := make([]string, 0, len(tv))
-				for _, t := range tv {
-					if s, ok := t.(string); ok {
-						tags = append(tags, s)
-					}
-				}
-				fm.Tags = NormalizeTags(tags)
-			}
-		default:
-			if fm.Extra == nil {
-				fm.Extra = make(map[string]any)
-			}
-			fm.Extra[k] = v
-		}
-	}
-}
-
-// ScoreRelatedness scores candidate against target: 1pt per shared tag,
-// 2pt for same area, 2pt for same project.
-func ScoreRelatedness(target Note, candidate NoteSummary) float64 {
-	var score float64
-	for _, t := range target.FrontMatter.Tags {
-		for _, ct := range candidate.Tags {
-			if strings.EqualFold(t, ct) {
-				score++
-			}
-		}
-	}
-	if target.FrontMatter.Area != "" && strings.EqualFold(target.FrontMatter.Area, candidate.Area) {
-		score += 2
-	}
-	if target.FrontMatter.Project != "" && strings.EqualFold(target.FrontMatter.Project, candidate.Project) {
-		score += 2
-	}
-	return score
-}
-
-// RankRelated scores, sorts, and trims candidates relative to target.
-// Notes with zero score or whose path matches excludePath are omitted.
-// If limit <= 0 all non-zero-scored notes are returned.
-func RankRelated(target Note, candidates []NoteSummary, excludePath string, limit int) []RankedNote {
-	var ranked []RankedNote
-	for _, c := range candidates {
-		if c.Ref.Path == excludePath {
-			continue
-		}
-		if score := ScoreRelatedness(target, c); score > 0 {
-			ranked = append(ranked, RankedNote{Summary: c, Score: score})
-		}
-	}
-	slices.SortFunc(ranked, func(a, b RankedNote) int {
-		return cmp.Compare(b.Score, a.Score)
-	})
-	if limit > 0 && len(ranked) > limit {
-		ranked = ranked[:limit]
-	}
-	return ranked
-}
-
-// NormalizeScopeID applies canonical scope ID normalization.
-func NormalizeScopeID(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	s = strings.ToLower(s)
-	if s == "" {
-		return "", fmt.Errorf("scope ID is empty")
-	}
-	if utf8.RuneCountInString(s) > 64 {
-		return "", fmt.Errorf("scope ID exceeds 64 runes")
-	}
-	for _, r := range s {
-		if !isSlugRune(r) {
-			return "", fmt.Errorf("scope ID contains invalid character %q (only [a-z0-9_-] allowed)", r)
-		}
-	}
-	return s, nil
-}
-
-func isSlugRune(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
 }

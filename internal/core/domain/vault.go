@@ -123,12 +123,6 @@ type QueryResult struct {
 	NextCursor      string
 }
 
-// RankedNote pairs a summary with a relevance score from search.
-type RankedNote struct {
-	Summary NoteSummary
-	Score   float64
-}
-
 // ScopeInfo describes a single vault scope visible to the caller.
 type ScopeInfo struct {
 	Scope        ScopeID      `json:"scope"`
