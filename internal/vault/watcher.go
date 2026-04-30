@@ -262,10 +262,7 @@ func (w *watcher) removeFromIndex(absPath string) {
 	if !ok {
 		return
 	}
-	w.vault.mu.Lock()
-	delete(w.vault.notes, np.IndexKey)
-	w.vault.mu.Unlock()
-	w.vault.idx.Remove(domain.NoteRef{Scope: w.vault.scope, Path: np.Storage})
+	w.vault.removeNoteFromAllIndexes(np.IndexKey, np.Storage)
 }
 
 func (w *watcher) handleRename(oldAbs, newAbs string) {
@@ -290,10 +287,13 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 	}
 	note.Ref.Path = newNP.Storage
 	s := w.vault.noteToSummary(note)
+	links := parseLinks(note.Body)
 
 	w.vault.mu.Lock()
 	delete(w.vault.notes, oldNP.IndexKey)
+	w.vault.removeLinkIndexLocked(oldNP.Storage)
 	w.vault.notes[newNP.IndexKey] = s
+	w.vault.addLinkIndexLocked(newNP.Storage, links)
 	w.vault.mu.Unlock()
 
 	w.vault.idx.Remove(domain.NoteRef{Scope: w.vault.scope, Path: oldNP.Storage})

@@ -1,8 +1,11 @@
 package vault
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/whiskeyjimbo/paras/internal/domain"
 )
@@ -82,6 +85,100 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Fil
 
 func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 	return s.vault.Stats(ctx)
+}
+
+func (s *NoteService) Health(ctx context.Context) (domain.VaultHealth, error) {
+	return s.vault.Health(ctx)
+}
+
+func (s *NoteService) Rescan(ctx context.Context) error {
+	return s.vault.Rescan(ctx)
+}
+
+func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
+	np, err := s.normalizeRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	ref.Path = np.Storage
+	return s.vault.Backlinks(ctx, ref, includeAssets, filter)
+}
+
+// Related returns notes scored by tag/area/project overlap with ref.
+// Score = 1 per shared tag + 2 if same area + 2 if same project.
+func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.Filter) ([]domain.RankedNote, error) {
+	np, err := s.normalizeRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	ref.Path = np.Storage
+	note, err := s.vault.Get(ctx, np.Storage)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter, Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	var ranked []domain.RankedNote
+	for _, n := range result.Notes {
+		if n.Ref.Path == ref.Path {
+			continue
+		}
+		score := relatedScore(note, n)
+		if score > 0 {
+			ranked = append(ranked, domain.RankedNote{Summary: n, Score: score})
+		}
+	}
+	slices.SortFunc(ranked, func(a, b domain.RankedNote) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked, nil
+}
+
+func relatedScore(target domain.Note, candidate domain.NoteSummary) float64 {
+	var score float64
+	for _, t := range target.FrontMatter.Tags {
+		for _, ct := range candidate.Tags {
+			if strings.EqualFold(t, ct) {
+				score++
+			}
+		}
+	}
+	if target.FrontMatter.Area != "" && strings.EqualFold(target.FrontMatter.Area, candidate.Area) {
+		score += 2
+	}
+	if target.FrontMatter.Project != "" && strings.EqualFold(target.FrontMatter.Project, candidate.Project) {
+		score += 2
+	}
+	return score
+}
+
+func (s *NoteService) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
+	lv, ok := s.vault.(*LocalVault)
+	if !ok {
+		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
+	}
+	return lv.CreateBatch(ctx, inputs)
+}
+
+func (s *NoteService) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
+	lv, ok := s.vault.(*LocalVault)
+	if !ok {
+		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
+	}
+	return lv.UpdateBodyBatch(ctx, items)
+}
+
+func (s *NoteService) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
+	lv, ok := s.vault.(*LocalVault)
+	if !ok {
+		return domain.BatchResult{}, fmt.Errorf("batch ops require LocalVault")
+	}
+	return lv.PatchFrontMatterBatch(ctx, items)
 }
 
 // normalizeRef validates the scope against the vault and normalizes the path.

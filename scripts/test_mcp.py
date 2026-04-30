@@ -432,6 +432,193 @@ def run_tests(c: MCPClient):
     check_err("hard-deleted note not accessible", resp, "not_found")
 
 
+def run_phase2_tests(c: MCPClient):
+
+    section("vault_health")
+    resp = c.call("vault_health", {})
+    is_err, text = check_ok("vault_health succeeds", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("UnrecognizedFiles present", data is not None and "UnrecognizedFiles" in data, str(data))
+        check("WatcherStatus present", data is not None and "WatcherStatus" in data, str(data))
+
+    section("vault_rescan")
+    resp = c.call("vault_rescan", {})
+    is_err, text = check_ok("vault_rescan succeeds", resp)
+    if not is_err:
+        check("returns rescan complete", "rescan" in text.lower(), text)
+
+    section("notes_stale")
+    # All notes in the vault were just created — none should be stale with days=1
+    resp = c.call("notes_stale", {"days": 1})
+    is_err, text = check_ok("notes_stale with days=1", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("returns Notes key", data is not None and "Notes" in data, str(data))
+        check("no notes stale within 1 day", data and len(data.get("Notes", [])) == 0, str(data))
+
+    # notes_stale with days=0 should error
+    resp = c.call("notes_stale", {"days": 0})
+    check_err("days=0 → error", resp)
+
+    section("notes_backlinks")
+    # Create two notes that link to a target note, one via asset embed
+    c.call("note_create", {"path": "projects/target.md", "title": "Target Note", "body": "I am the target."})
+    c.call("note_create", {
+        "path": "projects/linker-a.md",
+        "body": "See [[target]] for details.",
+    })
+    c.call("note_create", {
+        "path": "resources/linker-b.md",
+        "body": "Reference ![[target]] as an asset.",
+    })
+    c.call("note_create", {
+        "path": "areas/unrelated.md",
+        "body": "No links here.",
+    })
+
+    # Default (include_assets=false) should only return linker-a
+    resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md"})
+    is_err, text = check_ok("backlinks (no assets)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("returns list", isinstance(data, list), str(data))
+        paths = [e.get("Summary", {}).get("Ref", {}).get("Path", "") for e in (data or [])]
+        check("linker-a included", any("linker-a" in p for p in paths), str(paths))
+        check("linker-b excluded (asset)", not any("linker-b" in p for p in paths), str(paths))
+        check("unrelated excluded", not any("unrelated" in p for p in paths), str(paths))
+
+    # With include_assets=true both linkers should appear; linker-b has IsAsset=true
+    resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md", "include_assets": True})
+    is_err, text = check_ok("backlinks (include_assets=true)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("both linkers present", data is not None and len(data) >= 2, str(data))
+        asset_entries = [e for e in (data or []) if e.get("IsAsset")]
+        non_asset_entries = [e for e in (data or []) if not e.get("IsAsset")]
+        check("linker-b has IsAsset=true", len(asset_entries) >= 1, str(data))
+        check("linker-a has IsAsset=false", len(non_asset_entries) >= 1, str(data))
+
+    # Backlinks for a note with no inbound links should return empty array
+    resp = c.call("notes_backlinks", {"scope": "personal", "path": "areas/unrelated.md"})
+    is_err, text = check_ok("backlinks for note with no inbound links", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("empty array", data == [], str(data))
+
+    section("notes_related")
+    c.call("note_create", {
+        "path": "projects/rel-a.md",
+        "body": "Project A",
+        "tags": ["go", "backend"],
+        "status": "active",
+    })
+    c.call("note_create", {
+        "path": "projects/rel-b.md",
+        "body": "Project B shares tags",
+        "tags": ["go", "backend"],
+        "status": "active",
+    })
+    c.call("note_create", {
+        "path": "resources/rel-c.md",
+        "body": "Unrelated resource",
+        "tags": ["cooking"],
+    })
+
+    resp = c.call("notes_related", {"scope": "personal", "path": "projects/rel-a.md"})
+    is_err, text = check_ok("notes_related for rel-a", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("returns list", isinstance(data, list), str(data))
+        if data:
+            check("top result has Score > 0", data[0].get("Score", 0) > 0, str(data[0]))
+            top_path = data[0].get("Summary", {}).get("Ref", {}).get("Path", "")
+            check("top result is rel-b (most overlap)", "rel-b" in top_path, str(data))
+
+    # Related for note with no shared attributes should return empty or low-scored
+    resp = c.call("notes_related", {"scope": "personal", "path": "resources/rel-c.md"})
+    is_err, text = check_ok("notes_related with no overlap", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("returns list", isinstance(data, list), str(data))
+
+    section("notes_create_batch")
+    resp = c.call("notes_create_batch", {
+        "notes": [
+            {"path": "projects/batch-a.md", "body": "Batch note A", "status": "active"},
+            {"path": "projects/batch-b.md", "body": "Batch note B"},
+            {"path": "../escape/bad.md", "body": "should fail"},  # path traversal
+        ]
+    })
+    is_err, text = check_ok("notes_create_batch with mixed success/failure", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
+        check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
+        results = data.get("Results", []) if data else []
+        check("3 results returned", len(results) == 3, str(results))
+        ok_results = [r for r in results if r.get("OK")]
+        fail_results = [r for r in results if not r.get("OK")]
+        check("2 OK results", len(ok_results) == 2, str(results))
+        check("1 failed result has Error", len(fail_results) == 1 and fail_results[0].get("Error"), str(fail_results))
+
+    section("notes_update_batch")
+    resp = c.call("notes_update_batch", {
+        "notes": [
+            {"path": "projects/batch-a.md", "body": "Updated body A"},
+            {"path": "projects/batch-b.md", "body": "Updated body B"},
+            {"path": "projects/nonexistent.md", "body": "should fail"},
+        ]
+    })
+    is_err, text = check_ok("notes_update_batch with mixed success/failure", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
+        check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
+
+    section("notes_patch_frontmatter_batch")
+    resp = c.call("notes_patch_frontmatter_batch", {
+        "notes": [
+            {"path": "projects/batch-a.md", "fields": {"status": "done"}},
+            {"path": "projects/batch-b.md", "fields": {"status": "done"}},
+            {"path": "projects/nonexistent.md", "fields": {"status": "done"}},
+        ]
+    })
+    is_err, text = check_ok("notes_patch_frontmatter_batch with mixed success/failure", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
+        check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
+        # verify status was actually updated
+    resp = c.call("note_get", {"scope": "personal", "path": "projects/batch-a.md"})
+    is_err, text = check_ok("get batch-a after patch", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("status=done applied", data and data.get("FrontMatter", {}).get("Status") == "done", str(data))
+
+    section("category_templates")
+    # Projects notes created without explicit status should get status=active from default template
+    resp = c.call("note_create", {"path": "projects/templated.md", "title": "Templated Project"})
+    is_err, text = check_ok("create note in projects/ (template applies)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("status=active from template", data and data.get("Status") == "active", str(data))
+
+    # Archives notes should get status=archived from default template
+    resp = c.call("note_create", {"path": "archives/templated-archive.md", "title": "Archived"})
+    is_err, text = check_ok("create note in archives/ (template applies)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("status=archived from template", data and data.get("Status") == "archived", str(data))
+
+    # Explicit status should override the template
+    resp = c.call("note_create", {"path": "projects/explicit-status.md", "status": "paused"})
+    is_err, text = check_ok("explicit status overrides template", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("status=paused (explicit wins)", data and data.get("Status") == "paused", str(data))
+
+
 def main():
     global verbose
 
@@ -467,6 +654,7 @@ def main():
             print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}")
 
             run_tests(c)
+            run_phase2_tests(c)
 
         finally:
             c.close()

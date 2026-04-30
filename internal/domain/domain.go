@@ -161,6 +161,57 @@ func NormalizeTag(s string) (string, error) {
 	return result, nil
 }
 
+// BatchUpdateBodyInput is one item in a notes_update_batch request.
+type BatchUpdateBodyInput struct {
+	Path    string
+	Body    string
+	IfMatch string
+}
+
+// BatchPatchFrontMatterInput is one item in a notes_patch_frontmatter_batch request.
+type BatchPatchFrontMatterInput struct {
+	Path    string
+	Fields  map[string]any
+	IfMatch string
+}
+
+// BacklinkEntry is a note that contains a wikilink pointing at a given target.
+type BacklinkEntry struct {
+	Summary NoteSummary
+	IsAsset bool // true when referenced via ![[...]] asset-embed syntax
+}
+
+// BatchItemResult reports per-note outcome for a batch operation.
+// One note's failure never rolls back siblings.
+type BatchItemResult struct {
+	Index   int          // position in the original request slice
+	Path    string       // vault-relative path
+	OK      bool         // true on success
+	Summary *NoteSummary // non-nil on success
+	Error   string       // non-empty on failure
+}
+
+// BatchResult is the aggregate response for a batch operation.
+type BatchResult struct {
+	Results      []BatchItemResult
+	SuccessCount int
+	FailureCount int
+}
+
+// CategoryTemplate defines default frontmatter applied on note creation.
+type CategoryTemplate struct {
+	Status string
+	Tags   []string
+}
+
+// DefaultTemplates are the built-in per-category creation defaults.
+var DefaultTemplates = map[Category]CategoryTemplate{
+	Projects:  {Status: "active"},
+	Areas:     {},
+	Resources: {},
+	Archives:  {Status: "archived"},
+}
+
 // NormalizeScopeID applies canonical scope ID normalization.
 // Rules: lowercase, trim whitespace, [a-z0-9_-] only, 1-64 runes.
 func NormalizeScopeID(s string) (string, error) {

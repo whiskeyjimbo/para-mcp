@@ -144,8 +144,9 @@ type Vault interface {
 
 	Query(ctx context.Context, q QueryRequest) (QueryResult, error)
 	Search(ctx context.Context, text string, filter Filter, limit int) ([]RankedNote, error)
-	Backlinks(ctx context.Context, ref NoteRef, filter Filter) ([]NoteSummary, error)
+	Backlinks(ctx context.Context, ref NoteRef, includeAssets bool, filter Filter) ([]BacklinkEntry, error)
 
 	Stats(ctx context.Context) (VaultStats, error)
 	Health(ctx context.Context) (VaultHealth, error)
+	Rescan(ctx context.Context) error
 }

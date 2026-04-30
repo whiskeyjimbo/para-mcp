@@ -22,16 +22,19 @@ import (
 var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
 type LocalVault struct {
-	scope string
-	root  string
-	caps  domain.Capabilities
+	scope     string
+	root      string
+	caps      domain.Capabilities
+	templates map[domain.Category]domain.CategoryTemplate
 
 	actors *actor.Pool
 	idx    *index.Index
 	w      *watcher
 
-	mu    sync.RWMutex
-	notes map[string]domain.NoteSummary // indexKey -> summary
+	mu        sync.RWMutex
+	notes     map[string]domain.NoteSummary // indexKey -> summary
+	outLinks  map[string][]outLink          // storagePath -> outgoing links
+	backlinks map[string][]backlinkSrc      // targetKey -> sources
 }
 
 // New creates a LocalVault rooted at root with the given scope.
@@ -41,11 +44,14 @@ func New(scope, root string, idxCfg index.Config) (*LocalVault, error) {
 	}
 	caseSensitive := probeCaseSensitivity(root)
 	v := &LocalVault{
-		scope:  scope,
-		root:   root,
-		actors: actor.New(),
-		idx:    index.New(idxCfg),
-		notes:  make(map[string]domain.NoteSummary),
+		scope:     scope,
+		root:      root,
+		actors:    actor.New(),
+		idx:       index.New(idxCfg),
+		notes:     make(map[string]domain.NoteSummary),
+		outLinks:  make(map[string][]outLink),
+		backlinks: make(map[string][]backlinkSrc),
+		templates: domain.DefaultTemplates,
 		caps: domain.Capabilities{
 			Writable:      true,
 			SoftDelete:    true,
@@ -90,6 +96,18 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 			return err
 		}
+		// Apply per-category template defaults for fields not explicitly set.
+		cat, hasCat := domain.CategoryFromPath(np.Storage)
+		if hasCat {
+			if tmpl, ok := v.templates[cat]; ok {
+				if in.FrontMatter.Status == "" && tmpl.Status != "" {
+					in.FrontMatter.Status = tmpl.Status
+				}
+				if len(in.FrontMatter.Tags) == 0 && len(tmpl.Tags) > 0 {
+					in.FrontMatter.Tags = append(in.FrontMatter.Tags, tmpl.Tags...)
+				}
+			}
+		}
 		in.FrontMatter.CreatedAt = time.Now().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
 		in.FrontMatter.Tags = normalizeTags(in.FrontMatter.Tags)
@@ -122,7 +140,8 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 			return err
 		}
 		summary = v.noteToSummary(note)
-		v.upsertNoteLocked(np.IndexKey, summary)
+		links := parseLinks(in.Body)
+		v.upsertWithLinks(np.IndexKey, np.Storage, summary, links)
 		v.idx.Add(summaryToDoc(summary, in.Body))
 		return nil
 	})
@@ -156,7 +175,8 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 			return err
 		}
 		summary = v.noteToSummary(note)
-		v.upsertNoteLocked(np.IndexKey, summary)
+		links := parseLinks(body)
+		v.upsertWithLinks(np.IndexKey, np.Storage, summary, links)
 		v.idx.Add(summaryToDoc(summary, body))
 		return nil
 	})
@@ -189,7 +209,9 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 			return err
 		}
 		summary = v.noteToSummary(note)
-		v.upsertNoteLocked(np.IndexKey, summary)
+		// Body unchanged; preserve existing outgoing links.
+		existingLinks := v.getLinksLocked(np.Storage)
+		v.upsertWithLinks(np.IndexKey, np.Storage, summary, existingLinks)
 		return nil
 	})
 	return summary, err
@@ -223,9 +245,12 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 		}
 		note.Ref.Path = nnp.Storage
 		summary = v.noteToSummary(note)
+		links := parseLinks(note.Body)
 		v.mu.Lock()
 		delete(v.notes, np.IndexKey)
+		v.removeLinkIndexLocked(np.Storage)
 		v.notes[nnp.IndexKey] = summary
+		v.addLinkIndexLocked(nnp.Storage, links)
 		v.mu.Unlock()
 		v.idx.Remove(domain.NoteRef{Scope: v.scope, Path: np.Storage})
 		v.idx.Add(summaryToDoc(summary, note.Body))
@@ -255,11 +280,7 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 				return err
 			}
 		}
-		ref := domain.NoteRef{Scope: v.scope, Path: np.Storage}
-		v.mu.Lock()
-		delete(v.notes, np.IndexKey)
-		v.mu.Unlock()
-		v.idx.Remove(ref)
+		v.removeNoteFromAllIndexes(np.IndexKey, np.Storage)
 		return nil
 	})
 }
@@ -294,6 +315,7 @@ func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.Que
 	offset := max(q.Offset, 0)
 	if offset >= total {
 		return domain.QueryResult{
+			Notes:           []domain.NoteSummary{},
 			Total:           total,
 			ScopesAttempted: []domain.ScopeID{v.scope},
 			ScopesSucceeded: []domain.ScopeID{v.scope},
@@ -345,13 +367,49 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	return results, nil
 }
 
-// Backlinks returns notes that link to ref. Stub for Phase 1 (outgoing-links
-// index is built in Phase 2).
-func (v *LocalVault) Backlinks(_ context.Context, _ domain.NoteRef, filter domain.Filter) ([]domain.NoteSummary, error) {
+// Backlinks returns notes that contain a wikilink pointing at ref.
+// When includeAssets is false, notes that only reference ref via ![[...]] are excluded.
+func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
 	if filter.AllowedScopes == nil {
 		return nil, errInternal
 	}
-	return nil, nil
+	if err := checkAllowedScopes(filter.AllowedScopes, v.scope); err != nil {
+		if errors.Is(err, errDenied) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	keys := linkMatchKeys(ref.Path)
+	seen := make(map[string]bool)
+	var entries []domain.BacklinkEntry
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	for _, key := range keys {
+		for _, src := range v.backlinks[key] {
+			if !includeAssets && src.isAsset {
+				continue
+			}
+			if seen[src.path] {
+				continue
+			}
+			seen[src.path] = true
+			srcKey := domain.IndexKey(src.path, v.caps.CaseSensitive)
+			s, ok := v.notes[srcKey]
+			if !ok {
+				continue
+			}
+			if !matchesFilter(s, filter) {
+				continue
+			}
+			entries = append(entries, domain.BacklinkEntry{Summary: s, IsAsset: src.isAsset})
+		}
+	}
+	return entries, nil
+}
+
+// Rescan triggers an immediate full vault scan, minting IDs for any new notes.
+func (v *LocalVault) Rescan(_ context.Context) error {
+	return v.scanVault()
 }
 
 // Stats returns aggregate note counts.
@@ -366,16 +424,110 @@ func (v *LocalVault) Stats(_ context.Context) (domain.VaultStats, error) {
 	return stats, nil
 }
 
-// Health returns vault diagnostic information including case collisions.
+// Health returns vault diagnostic information including case collisions and unrecognized files.
 func (v *LocalVault) Health(_ context.Context) (domain.VaultHealth, error) {
 	h := domain.VaultHealth{
-		WatcherStatus: v.w.watcherStatus.Load().(string),
-		SyncConflicts: int(v.w.syncConflicts.Load()),
+		WatcherStatus:     v.w.watcherStatus.Load().(string),
+		SyncConflicts:     int(v.w.syncConflicts.Load()),
+		UnrecognizedFiles: v.countUnrecognized(),
 	}
 	if v.caps.CaseSensitive {
 		h.CaseCollisions = v.detectCaseCollisions()
 	}
 	return h, nil
+}
+
+// countUnrecognized walks the vault root and counts files that are not
+// markdown notes in a PARA directory and not in known system directories.
+func (v *LocalVault) countUnrecognized() int {
+	var count int
+	_ = filepath.WalkDir(v.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(v.root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		first, _, _ := strings.Cut(rel, "/")
+		// skip hidden/system dirs
+		if strings.HasPrefix(first, ".") {
+			return filepath.SkipDir
+		}
+		if isMDFile(path) {
+			if _, ok := domain.CategoryFromPath(rel); ok {
+				return nil
+			}
+		}
+		count++
+		return nil
+	})
+	return count
+}
+
+// CreateBatch creates notes independently; one failure does not block siblings.
+func (v *LocalVault) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
+	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(inputs))}
+	for i, in := range inputs {
+		item := domain.BatchItemResult{Index: i, Path: in.Path}
+		np, err := v.normalizePath(in.Path)
+		if err != nil {
+			item.Error = err.Error()
+			res.FailureCount++
+			res.Results[i] = item
+			continue
+		}
+		sum, err := v.Create(ctx, domain.CreateInput{Path: np.Storage, FrontMatter: in.FrontMatter, Body: in.Body})
+		if err != nil {
+			item.Error = err.Error()
+			res.FailureCount++
+		} else {
+			item.OK = true
+			item.Summary = &sum
+			res.SuccessCount++
+		}
+		res.Results[i] = item
+	}
+	return res, nil
+}
+
+// UpdateBodyBatch updates note bodies independently; one failure does not block siblings.
+func (v *LocalVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
+	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
+	for i, it := range items {
+		item := domain.BatchItemResult{Index: i, Path: it.Path}
+		sum, err := v.UpdateBody(ctx, it.Path, it.Body, it.IfMatch)
+		if err != nil {
+			item.Error = err.Error()
+			res.FailureCount++
+		} else {
+			item.OK = true
+			item.Summary = &sum
+			res.SuccessCount++
+		}
+		res.Results[i] = item
+	}
+	return res, nil
+}
+
+// PatchFrontMatterBatch patches frontmatter independently; one failure does not block siblings.
+func (v *LocalVault) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
+	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
+	for i, it := range items {
+		item := domain.BatchItemResult{Index: i, Path: it.Path}
+		sum, err := v.PatchFrontMatter(ctx, it.Path, it.Fields, it.IfMatch)
+		if err != nil {
+			item.Error = err.Error()
+			res.FailureCount++
+		} else {
+			item.OK = true
+			item.Summary = &sum
+			res.SuccessCount++
+		}
+		res.Results[i] = item
+	}
+	return res, nil
 }
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {
@@ -419,10 +571,71 @@ func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
 	}
 }
 
-func (v *LocalVault) upsertNoteLocked(indexKey string, s domain.NoteSummary) {
+// upsertWithLinks updates the notes map and link index atomically under mu.
+func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
 	v.mu.Lock()
 	v.notes[indexKey] = s
+	v.removeLinkIndexLocked(storagePath)
+	v.addLinkIndexLocked(storagePath, links)
 	v.mu.Unlock()
+}
+
+// removeLinkIndexLocked removes all outgoing link entries for storagePath.
+// Must be called with mu held.
+func (v *LocalVault) removeLinkIndexLocked(storagePath string) {
+	old, ok := v.outLinks[storagePath]
+	if !ok {
+		return
+	}
+	for _, link := range old {
+		srcs := v.backlinks[link.targetKey]
+		out := srcs[:0]
+		for _, s := range srcs {
+			if s.path != storagePath {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			delete(v.backlinks, link.targetKey)
+		} else {
+			v.backlinks[link.targetKey] = out
+		}
+	}
+	delete(v.outLinks, storagePath)
+}
+
+// addLinkIndexLocked records outgoing links for storagePath in the reverse index.
+// Must be called with mu held.
+func (v *LocalVault) addLinkIndexLocked(storagePath string, links []outLink) {
+	if len(links) == 0 {
+		return
+	}
+	v.outLinks[storagePath] = links
+	for _, link := range links {
+		v.backlinks[link.targetKey] = append(v.backlinks[link.targetKey], backlinkSrc{
+			path:    storagePath,
+			isAsset: link.isAsset,
+		})
+	}
+}
+
+// getLinksLocked returns the current outgoing links for storagePath without modifying them.
+// Used when a frontmatter patch doesn't change the body.
+func (v *LocalVault) getLinksLocked(storagePath string) []outLink {
+	v.mu.RLock()
+	links := v.outLinks[storagePath]
+	v.mu.RUnlock()
+	return links
+}
+
+// removeNoteFromAllIndexes removes a note from the notes map, link index, and BM25 index.
+func (v *LocalVault) removeNoteFromAllIndexes(indexKey, storagePath string) {
+	ref := domain.NoteRef{Scope: v.scope, Path: storagePath}
+	v.mu.Lock()
+	delete(v.notes, indexKey)
+	v.removeLinkIndexLocked(storagePath)
+	v.mu.Unlock()
+	v.idx.Remove(ref)
 }
 
 func (v *LocalVault) scanVault() error {
@@ -461,7 +674,8 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 		}
 	}
 	s := v.noteToSummary(note)
-	v.upsertNoteLocked(np.IndexKey, s)
+	links := parseLinks(note.Body)
+	v.upsertWithLinks(np.IndexKey, np.Storage, s, links)
 	v.idx.Add(summaryToDoc(s, note.Body))
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -50,6 +51,16 @@ func Build(svc *vault.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
 	s.AddTool(toolNotesList(), h.notesList)
 	s.AddTool(toolNotesSearch(), h.notesSearch)
 	s.AddTool(toolVaultStats(), h.vaultStats)
+
+	// Phase 2 tools
+	s.AddTool(toolNotesBacklinks(), h.notesBacklinks)
+	s.AddTool(toolNotesRelated(), h.notesRelated)
+	s.AddTool(toolNotesStale(), h.notesStale)
+	s.AddTool(toolVaultHealth(), h.vaultHealth)
+	s.AddTool(toolVaultRescan(), h.vaultRescan)
+	s.AddTool(toolNotesCreateBatch(), h.notesCreateBatch)
+	s.AddTool(toolNotesUpdateBatch(), h.notesUpdateBatch)
+	s.AddTool(toolNotesPatchFrontMatterBatch(), h.notesPatchFrontMatterBatch)
 
 	return s
 }
@@ -327,6 +338,274 @@ func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*m
 		return toolErr(err), nil
 	}
 	return jsonResult(stats)
+}
+
+// ── Phase 2 tools ────────────────────────────────────────────────────────────
+
+func toolNotesBacklinks() mcplib.Tool {
+	return mcplib.NewTool("notes_backlinks",
+		mcplib.WithDescription("Return notes that contain a wikilink pointing at the given note."),
+		mcplib.WithString("scope", mcplib.Required()),
+		mcplib.WithString("path", mcplib.Required()),
+		mcplib.WithBoolean("include_assets", mcplib.Description("Include ![[...]] asset-embed references (default false)")),
+	)
+}
+
+func (h *handlers) notesBacklinks(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	entries, err := h.svc.Backlinks(ctx, ref, req.GetBool("include_assets", false),
+		domain.Filter{AllowedScopes: h.scopes(ctx)})
+	if err != nil {
+		return toolErr(err), nil
+	}
+	if entries == nil {
+		entries = []domain.BacklinkEntry{}
+	}
+	return jsonResult(entries)
+}
+
+func toolNotesRelated() mcplib.Tool {
+	return mcplib.NewTool("notes_related",
+		mcplib.WithDescription("Return notes related by tag, area, and project overlap, scored by overlap count."),
+		mcplib.WithString("scope", mcplib.Required()),
+		mcplib.WithString("path", mcplib.Required()),
+		mcplib.WithNumber("limit", mcplib.Description("Max results (default 10)")),
+	)
+}
+
+func (h *handlers) notesRelated(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", 10), domain.Filter{AllowedScopes: h.scopes(ctx)})
+	if err != nil {
+		return toolErr(err), nil
+	}
+	if results == nil {
+		results = []domain.RankedNote{}
+	}
+	return jsonResult(results)
+}
+
+func toolNotesStale() mcplib.Tool {
+	return mcplib.NewTool("notes_stale",
+		mcplib.WithDescription("Return notes not updated within the given number of days."),
+		mcplib.WithNumber("days", mcplib.Required(), mcplib.Description("Return notes not updated in this many days")),
+		mcplib.WithString("status", mcplib.Description("Filter by status")),
+		mcplib.WithArray("categories", mcplib.WithStringItems(), mcplib.Description("Limit to PARA categories")),
+		mcplib.WithNumber("limit", mcplib.Description("Max results (default 20)")),
+	)
+}
+
+func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	days := req.GetInt("days", 0)
+	if days <= 0 {
+		return mcplib.NewToolResultError("days must be > 0"), nil
+	}
+	cutoff := timeNow().AddDate(0, 0, -days)
+	f := domain.Filter{
+		AllowedScopes: h.scopes(ctx),
+		Status:        req.GetString("status", ""),
+		UpdatedBefore: &cutoff,
+	}
+	for _, c := range req.GetStringSlice("categories", nil) {
+		f.Categories = append(f.Categories, domain.Category(c))
+	}
+	result, err := h.svc.Query(ctx, domain.QueryRequest{
+		Filter: f,
+		Sort:   domain.SortByUpdated,
+		Desc:   false, // oldest first
+		Limit:  req.GetInt("limit", 20),
+	})
+	if err != nil {
+		return toolErr(err), nil
+	}
+	return jsonResult(result)
+}
+
+// timeNow is a variable so tests can override it.
+var timeNow = func() time.Time { return time.Now() }
+
+func toolVaultHealth() mcplib.Tool {
+	return mcplib.NewTool("vault_health",
+		mcplib.WithDescription("Return vault diagnostic info: case collisions, unrecognized files, sync conflicts, watcher status."),
+	)
+}
+
+func (h *handlers) vaultHealth(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	health, err := h.svc.Health(ctx)
+	if err != nil {
+		return toolErr(err), nil
+	}
+	return jsonResult(health)
+}
+
+func toolVaultRescan() mcplib.Tool {
+	return mcplib.NewTool("vault_rescan",
+		mcplib.WithDescription("Trigger an immediate vault rescan. Mints IDs for any newly discovered notes."),
+	)
+}
+
+func (h *handlers) vaultRescan(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	if err := h.svc.Rescan(ctx); err != nil {
+		return toolErr(err), nil
+	}
+	return mcplib.NewToolResultText("rescan complete"), nil
+}
+
+func toolNotesCreateBatch() mcplib.Tool {
+	return mcplib.NewTool("notes_create_batch",
+		mcplib.WithDescription("Create multiple notes. Each note is independent: one failure does not prevent others from being created."),
+		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of note objects. Each must have "path"; optional: "title", "body", "status", "tags"`)),
+	)
+}
+
+func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	raw, ok := req.GetArguments()["notes"]
+	if !ok {
+		return mcplib.NewToolResultError("notes required"), nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return mcplib.NewToolResultError("notes must be an array"), nil
+	}
+	inputs := make([]domain.CreateInput, 0, len(items))
+	for i, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d] must be an object", i)), nil
+		}
+		path, _ := obj["path"].(string)
+		if path == "" {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d].path required", i)), nil
+		}
+		in := domain.CreateInput{
+			Path: path,
+			Body: stringVal(obj, "body"),
+			FrontMatter: domain.FrontMatter{
+				Title:  stringVal(obj, "title"),
+				Status: stringVal(obj, "status"),
+				Tags:   stringSliceVal(obj, "tags"),
+			},
+		}
+		inputs = append(inputs, in)
+	}
+	result, err := h.svc.CreateBatch(ctx, inputs)
+	if err != nil {
+		return toolErr(err), nil
+	}
+	return jsonResult(result)
+}
+
+func toolNotesUpdateBatch() mcplib.Tool {
+	return mcplib.NewTool("notes_update_batch",
+		mcplib.WithDescription("Update bodies for multiple notes. Each note is independent: one failure does not affect siblings."),
+		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of objects with "scope", "path", "body"; optional "if_match"`)),
+	)
+}
+
+func (h *handlers) notesUpdateBatch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	raw, ok := req.GetArguments()["notes"]
+	if !ok {
+		return mcplib.NewToolResultError("notes required"), nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return mcplib.NewToolResultError("notes must be an array"), nil
+	}
+	inputs := make([]domain.BatchUpdateBodyInput, 0, len(items))
+	for i, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d] must be an object", i)), nil
+		}
+		path, _ := obj["path"].(string)
+		if path == "" {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d].path required", i)), nil
+		}
+		inputs = append(inputs, domain.BatchUpdateBodyInput{
+			Path:    path,
+			Body:    stringVal(obj, "body"),
+			IfMatch: stringVal(obj, "if_match"),
+		})
+	}
+	result, err := h.svc.UpdateBodyBatch(ctx, inputs)
+	if err != nil {
+		return toolErr(err), nil
+	}
+	return jsonResult(result)
+}
+
+func toolNotesPatchFrontMatterBatch() mcplib.Tool {
+	return mcplib.NewTool("notes_patch_frontmatter_batch",
+		mcplib.WithDescription("Patch frontmatter for multiple notes. Each note is independent: one failure does not affect siblings."),
+		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of objects with "scope", "path", "fields"; optional "if_match"`)),
+	)
+}
+
+func (h *handlers) notesPatchFrontMatterBatch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	raw, ok := req.GetArguments()["notes"]
+	if !ok {
+		return mcplib.NewToolResultError("notes required"), nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return mcplib.NewToolResultError("notes must be an array"), nil
+	}
+	inputs := make([]domain.BatchPatchFrontMatterInput, 0, len(items))
+	for i, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d] must be an object", i)), nil
+		}
+		path, _ := obj["path"].(string)
+		if path == "" {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d].path required", i)), nil
+		}
+		fields, _ := obj["fields"].(map[string]any)
+		if fields == nil {
+			return mcplib.NewToolResultError(fmt.Sprintf("notes[%d].fields required", i)), nil
+		}
+		inputs = append(inputs, domain.BatchPatchFrontMatterInput{
+			Path:    path,
+			Fields:  fields,
+			IfMatch: stringVal(obj, "if_match"),
+		})
+	}
+	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs)
+	if err != nil {
+		return toolErr(err), nil
+	}
+	return jsonResult(result)
+}
+
+func stringVal(m map[string]any, key string) string {
+	v, _ := m[key].(string)
+	return v
+}
+
+func stringSliceVal(m map[string]any, key string) []string {
+	raw, ok := m[key]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func jsonResult(v any) (*mcplib.CallToolResult, error) {
