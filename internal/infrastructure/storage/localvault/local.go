@@ -22,13 +22,20 @@ type Option func(*vaultConfig)
 
 type vaultConfig struct {
 	indexOpts []index.Option
+	ftsIndex  index.FTSIndex
 	templates map[domain.Category]domain.CategoryTemplate
 	clock     func() time.Time
 }
 
-// WithIndexOptions passes options through to the underlying index.
+// WithIndexOptions passes options through to the default BM25 index.
+// Ignored if WithFTSIndex is also provided.
 func WithIndexOptions(opts ...index.Option) Option {
 	return func(c *vaultConfig) { c.indexOpts = append(c.indexOpts, opts...) }
+}
+
+// WithFTSIndex replaces the default BM25 index with a custom implementation.
+func WithFTSIndex(i index.FTSIndex) Option {
+	return func(c *vaultConfig) { c.ftsIndex = i }
 }
 
 // WithTemplates overrides per-category creation templates (default: domain.DefaultTemplates).
@@ -50,7 +57,7 @@ type LocalVault struct {
 	clock     func() time.Time
 
 	actors *actor.Pool
-	idx    *index.Index
+	idx    index.FTSIndex
 	w      *watcher
 
 	mu        sync.RWMutex
@@ -72,12 +79,16 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		return nil, fmt.Errorf("create vault root: %w", err)
 	}
 	caseSensitive := probeCaseSensitivity(root)
+	fts := cfg.ftsIndex
+	if fts == nil {
+		fts = index.New(cfg.indexOpts...)
+	}
 	v := &LocalVault{
 		scope:     scope,
 		root:      root,
 		clock:     cfg.clock,
 		actors:    actor.New(),
-		idx:       index.New(cfg.indexOpts...),
+		idx:       fts,
 		notes:     make(map[string]domain.NoteSummary),
 		outLinks:  make(map[string][]outLink),
 		backlinks: make(map[string][]backlinkSrc),

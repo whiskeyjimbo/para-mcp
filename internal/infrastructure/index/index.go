@@ -96,6 +96,14 @@ type writeOp struct {
 	syncDone chan<- struct{}
 }
 
+// FTSIndex is the interface LocalVault uses to interact with the full-text search index.
+type FTSIndex interface {
+	Add(doc Doc)
+	Remove(ref domain.NoteRef)
+	Search(query string, limit int) []Result
+	Close()
+}
+
 // Index is a BM25 full-text index.
 type Index struct {
 	cfg       config
