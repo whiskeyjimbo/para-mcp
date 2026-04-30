@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
@@ -60,8 +59,7 @@ type LocalVault struct {
 	idx    index.FTSIndex
 	w      *watcher
 
-	mu    sync.RWMutex
-	notes map[string]domain.NoteSummary
+	cache *NoteCache
 	graph *BacklinkGraph
 }
 
@@ -88,7 +86,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		clock:     cfg.clock,
 		actors:    actor.New(),
 		idx:       fts,
-		notes:     make(map[string]domain.NoteSummary),
+		cache:     newNoteCache(),
 		graph:     newBacklinkGraph(),
 		templates: cfg.templates,
 		caps: domain.Capabilities{
@@ -315,10 +313,7 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 		note.Ref.Path = nnp.Storage
 		summary = v.noteToSummary(note)
 		links := parseLinks(note.Body)
-		v.mu.Lock()
-		delete(v.notes, np.IndexKey)
-		v.notes[nnp.IndexKey] = summary
-		v.mu.Unlock()
+		v.cache.Move(np.IndexKey, nnp.IndexKey, summary)
 		v.graph.Remove(np.Storage)
 		v.graph.Upsert(nnp.Storage, links)
 		v.idx.Remove(domain.NoteRef{Scope: v.scope, Path: np.Storage})
@@ -360,12 +355,7 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 }
 
 func (v *LocalVault) Query(_ context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
-	v.mu.RLock()
-	all := make([]domain.NoteSummary, 0, len(v.notes))
-	for _, s := range v.notes {
-		all = append(all, s)
-	}
-	v.mu.RUnlock()
+	all := v.cache.All()
 
 	filtered := domain.ApplyFilter(all, q.Filter)
 	domain.SortSummaries(filtered, q.Sort, q.Desc)
@@ -407,11 +397,9 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	}
 	hits := v.idx.Search(text, limit*3)
 	var results []domain.RankedNote
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	for _, h := range hits {
 		key := domain.IndexKey(h.Ref.Path, v.caps.CaseSensitive)
-		s, ok := v.notes[key]
+		s, ok := v.cache.Get(key)
 		if !ok {
 			continue
 		}
@@ -430,8 +418,6 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 	keys := linkMatchKeys(ref.Path)
 	seen := make(map[string]bool)
 	var entries []domain.BacklinkEntry
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	for _, key := range keys {
 		for _, src := range v.graph.Backlinks(key) {
 			if !includeAssets && src.isAsset {
@@ -442,7 +428,7 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 			}
 			seen[src.path] = true
 			srcKey := domain.IndexKey(src.path, v.caps.CaseSensitive)
-			s, ok := v.notes[srcKey]
+			s, ok := v.cache.Get(srcKey)
 			if !ok {
 				continue
 			}
@@ -460,13 +446,11 @@ func (v *LocalVault) Rescan(_ context.Context) error {
 }
 
 func (v *LocalVault) Stats(_ context.Context) (domain.VaultStats, error) {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	stats := domain.VaultStats{ByCategory: make(map[domain.Category]int)}
-	for _, s := range v.notes {
+	v.cache.Iterate(func(_ string, s domain.NoteSummary) {
 		stats.TotalNotes++
 		stats.ByCategory[s.Category]++
-	}
+	})
 	return stats, nil
 }
 
@@ -635,17 +619,13 @@ func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
 }
 
 func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
-	v.mu.Lock()
-	v.notes[indexKey] = s
-	v.mu.Unlock()
+	v.cache.Set(indexKey, s)
 	v.graph.Upsert(storagePath, links)
 }
 
 func (v *LocalVault) removeNoteFromAllIndexes(indexKey, storagePath string) {
 	ref := domain.NoteRef{Scope: v.scope, Path: storagePath}
-	v.mu.Lock()
-	delete(v.notes, indexKey)
-	v.mu.Unlock()
+	v.cache.Delete(indexKey)
 	v.graph.Remove(storagePath)
 	v.idx.Remove(ref)
 }
@@ -690,18 +670,16 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 }
 
 func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	lower := make(map[string]string, len(v.notes))
+	lower := make(map[string]string, v.cache.Len())
 	var collisions []domain.CaseCollision
-	for key, s := range v.notes {
+	v.cache.Iterate(func(key string, s domain.NoteSummary) {
 		lk := domain.IndexKey(key, false)
 		if prev, exists := lower[lk]; exists && prev != key {
 			collisions = append(collisions, domain.CaseCollision{PathA: prev, PathB: s.Ref.Path})
 		} else {
 			lower[lk] = key
 		}
-	}
+	})
 	return collisions
 }
 
