@@ -3,7 +3,6 @@ package mcp
 
 import (
 	"context"
-	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
@@ -17,7 +16,6 @@ type buildConfig struct {
 	scopes        ports.ScopeResolver
 	serverName    string
 	serverVersion string
-	clock         func() time.Time
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -40,11 +38,6 @@ func WithServerVersion(v string) Option {
 	return func(c *buildConfig) { c.serverVersion = v }
 }
 
-// WithClock overrides the time source used by the stale notes handler (default: time.Now).
-func WithClock(fn func() time.Time) Option {
-	return func(c *buildConfig) { c.clock = fn }
-}
-
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 })
@@ -55,7 +48,6 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		scopes:        personalOnly,
 		serverName:    "paras",
 		serverVersion: "0.1.0",
-		clock:         time.Now,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -67,7 +59,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: cfg.scopes, clock: cfg.clock}
+	h := &handlers{svc: svc, scopes: cfg.scopes}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)

@@ -24,6 +24,7 @@ type NoteService struct {
 	vault            ports.Vault
 	templates        map[domain.Category]domain.CategoryTemplate
 	idMinter         func() string
+	clock            func() time.Time
 	relatedScanLimit int
 }
 
@@ -46,13 +47,18 @@ func WithRelatedScanLimit(n int) Option {
 	return func(s *NoteService) { s.relatedScanLimit = n }
 }
 
+// WithClock overrides the time source used by Stale (default: time.Now).
+func WithClock(fn func() time.Time) Option {
+	return func(s *NoteService) { s.clock = fn }
+}
+
 func defaultIDMinter() string {
 	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
 }
 
 // NewService wraps a Vault with NoteRef validation.
 func NewService(v ports.Vault, opts ...Option) *NoteService {
-	s := &NoteService{vault: v, templates: domain.DefaultTemplates, idMinter: defaultIDMinter, relatedScanLimit: 1000}
+	s := &NoteService{vault: v, templates: domain.DefaultTemplates, idMinter: defaultIDMinter, clock: time.Now, relatedScanLimit: 1000}
 	for _, o := range opts {
 		o(s)
 	}
@@ -158,6 +164,24 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Aut
 
 func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 	return s.vault.Stats(ctx)
+}
+
+func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error) {
+	if allowedScopes == nil {
+		return domain.QueryResult{}, errAllowedScopesNil
+	}
+	cutoff := s.clock().AddDate(0, 0, -days)
+	return s.Query(ctx, domain.QueryRequest{
+		Filter: domain.NewFilter(
+			domain.WithStatus(status),
+			domain.WithUpdatedBefore(cutoff),
+			domain.WithCategories(categories...),
+		),
+		AllowedScopes: allowedScopes,
+		Sort:          domain.SortByUpdated,
+		Desc:          false,
+		Limit:         limit,
+	})
 }
 
 func (s *NoteService) ListScopes(_ context.Context) []domain.ScopeInfo {

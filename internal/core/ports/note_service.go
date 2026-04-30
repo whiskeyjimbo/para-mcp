@@ -24,6 +24,7 @@ type NoteReader interface {
 	Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error)
 	Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error)
 	Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error)
+	Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, allowedScopes []domain.ScopeID) (domain.QueryResult, error)
 	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error)
 	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error)
 	Stats(ctx context.Context) (domain.VaultStats, error)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
@@ -20,7 +19,6 @@ const (
 type handlers struct {
 	svc    ports.NoteService
 	scopes ports.ScopeResolver
-	clock  func() time.Time
 }
 
 func requireNoteRef(req mcplib.CallToolRequest) (domain.NoteRef, *mcplib.CallToolResult) {
@@ -233,22 +231,11 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	if days <= 0 {
 		return mcplib.NewToolResultError("days must be > 0"), nil
 	}
-	cutoff := h.clock().AddDate(0, 0, -days)
 	cats := make([]domain.Category, 0, len(req.GetStringSlice("categories", nil)))
 	for _, c := range req.GetStringSlice("categories", nil) {
 		cats = append(cats, domain.Category(c))
 	}
-	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter: domain.NewFilter(
-			domain.WithStatus(req.GetString("status", "")),
-			domain.WithUpdatedBefore(cutoff),
-			domain.WithCategories(cats...),
-		),
-		AllowedScopes: h.scopes.Scopes(ctx),
-		Sort:          domain.SortByUpdated,
-		Desc:          false,
-		Limit:         req.GetInt("limit", defaultListLimit),
-	})
+	result, err := h.svc.Stale(ctx, days, cats, req.GetString("status", ""), req.GetInt("limit", defaultListLimit), h.scopes.Scopes(ctx))
 	if err != nil {
 		return toolErr(err), nil
 	}

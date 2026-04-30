@@ -123,12 +123,17 @@ func TestScopesFuncFlowsIntoNotesSearch(t *testing.T) {
 }
 
 func TestWithClockInjectedIntoNotesStale(t *testing.T) {
-	svc := newTestService(t)
+	t.Helper()
+	v, err := localvault.New("personal", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault.New: %v", err)
+	}
+	t.Cleanup(v.Close)
 	fixed := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	svc := application.NewService(v, application.WithClock(func() time.Time { return fixed }))
 	h := &handlers{
 		svc:    svc,
 		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
-		clock:  func() time.Time { return fixed },
 	}
 	req := mcplib.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"days": float64(30)}
