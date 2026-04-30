@@ -79,6 +79,10 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Fil
 	return s.vault.Search(ctx, text, filter, limit)
 }
 
+func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
+	return s.vault.Stats(ctx)
+}
+
 // normalizePath validates a vault-relative path without a symlink check (handler layer concern).
 // vault root is embedded in LocalVault; NoteService omits it so the check is skipped here.
 func (s *NoteService) normalizePath(path string) (domain.NormalizedPath, error) {

@@ -21,11 +21,6 @@ import (
 // errInternal is returned when AllowedScopes is nil (programmer error).
 var errInternal = errors.New("internal: AllowedScopes must not be nil")
 
-var (
-	errConflict = domain.ErrConflict
-	errNotFound = domain.ErrNotFound
-)
-
 type LocalVault struct {
 	scope string
 	root  string
@@ -75,7 +70,6 @@ func (v *LocalVault) Close() {
 func (v *LocalVault) Scope() domain.ScopeID             { return v.scope }
 func (v *LocalVault) Capabilities() domain.Capabilities { return v.caps }
 
-// Get reads a note from disk.
 func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {
@@ -84,7 +78,7 @@ func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
 	return v.readNote(np.Storage)
 }
 
-// Create writes a new note. Returns conflict if the path already exists.
+// Create returns ErrConflict if the path already exists (enforced atomically via O_EXCL).
 func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error) {
 	np, err := v.normalizePath(in.Path)
 	if err != nil {
@@ -111,7 +105,7 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		f, err := os.OpenFile(absPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
 			if os.IsExist(err) {
-				return errConflict
+				return domain.ErrConflict
 			}
 			return err
 		}
@@ -148,7 +142,7 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 			return err
 		}
 		if ifMatch != "" && note.ETag != ifMatch {
-			return errConflict
+			return domain.ErrConflict
 		}
 		note.FrontMatter.UpdatedAt = time.Now().UTC()
 		note.Body = body
@@ -182,7 +176,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 			return err
 		}
 		if ifMatch != "" && note.ETag != ifMatch {
-			return errConflict
+			return domain.ErrConflict
 		}
 		applyFrontMatterPatch(&note.FrontMatter, fields)
 		note.FrontMatter.UpdatedAt = time.Now().UTC()
@@ -218,7 +212,7 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 			return err
 		}
 		if ifMatch != "" && note.ETag != ifMatch {
-			return errConflict
+			return domain.ErrConflict
 		}
 		newAbs := filepath.Join(v.root, nnp.Storage)
 		if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
@@ -393,7 +387,7 @@ func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return domain.Note{}, errNotFound
+			return domain.Note{}, domain.ErrNotFound
 		}
 		return domain.Note{}, err
 	}
@@ -477,7 +471,7 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	lower := make(map[string]string, len(v.notes))
 	var collisions []domain.CaseCollision
 	for key, s := range v.notes {
-		lk := strings.ToLower(key)
+		lk := domain.IndexKey(key, false)
 		if prev, exists := lower[lk]; exists && prev != key {
 			collisions = append(collisions, domain.CaseCollision{PathA: prev, PathB: s.Ref.Path})
 		} else {
@@ -512,14 +506,12 @@ func applyFilter(notes []domain.NoteSummary, f domain.Filter) []domain.NoteSumma
 }
 
 func matchesFilter(n domain.NoteSummary, f domain.Filter) bool {
-	if len(f.Categories) > 0 {
-		found := slices.Contains(f.Categories, n.Category)
-		if !found {
-			if !(f.IncludeArchives && n.Category == domain.Archives) {
-				return false
-			}
-		}
-	} else if !f.IncludeArchives && n.Category == domain.Archives {
+	isArchive := n.Category == domain.Archives
+	inRequestedCategories := len(f.Categories) > 0 && slices.Contains(f.Categories, n.Category)
+	if isArchive && !f.IncludeArchives && !inRequestedCategories {
+		return false
+	}
+	if len(f.Categories) > 0 && !inRequestedCategories && !(isArchive && f.IncludeArchives) {
 		return false
 	}
 	if f.Status != "" && !strings.EqualFold(n.Status, f.Status) {
@@ -536,17 +528,8 @@ func matchesFilter(n domain.NoteSummary, f domain.Filter) bool {
 			return false
 		}
 	}
-	if len(f.AnyTags) > 0 {
-		found := false
-		for _, tag := range f.AnyTags {
-			if hasTag(n.Tags, tag) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
+	if len(f.AnyTags) > 0 && !slices.ContainsFunc(f.AnyTags, func(tag string) bool { return hasTag(n.Tags, tag) }) {
+		return false
 	}
 	if f.UpdatedAfter != nil && !n.UpdatedAt.After(*f.UpdatedAfter) {
 		return false

@@ -17,14 +17,14 @@ import (
 var allowedScopes = []domain.ScopeID{"personal"}
 
 // Build constructs and returns an MCPServer wired to svc.
-func Build(svc *vault.NoteService, v domain.Vault) *mcpserver.MCPServer {
+func Build(svc *vault.NoteService) *mcpserver.MCPServer {
 	s := mcpserver.NewMCPServer(
 		"paras",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, vault: v}
+	h := &handlers{svc: svc}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -41,8 +41,19 @@ func Build(svc *vault.NoteService, v domain.Vault) *mcpserver.MCPServer {
 }
 
 type handlers struct {
-	svc   *vault.NoteService
-	vault domain.Vault
+	svc *vault.NoteService
+}
+
+func requireNoteRef(req mcplib.CallToolRequest) (domain.NoteRef, *mcplib.CallToolResult) {
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return domain.NoteRef{}, mcplib.NewToolResultError(err.Error())
+	}
+	path, err := req.RequireString("path")
+	if err != nil {
+		return domain.NoteRef{}, mcplib.NewToolResultError(err.Error())
+	}
+	return domain.NoteRef{Scope: scope, Path: path}, nil
 }
 
 func toolNoteGet() mcplib.Tool {
@@ -54,15 +65,11 @@ func toolNoteGet() mcplib.Tool {
 }
 
 func (h *handlers) noteGet(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
 	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	note, err := h.svc.Get(ctx, domain.NoteRef{Scope: scope, Path: path})
+	note, err := h.svc.Get(ctx, ref)
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -112,19 +119,15 @@ func toolNoteUpdateBody() mcplib.Tool {
 }
 
 func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
 	}
 	body, err := req.RequireString("body")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	sum, err := h.svc.UpdateBody(ctx, domain.NoteRef{Scope: scope, Path: path}, body, req.GetString("if_match", ""))
+	sum, err := h.svc.UpdateBody(ctx, ref, body, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -142,13 +145,9 @@ func toolNotePatchFrontMatter() mcplib.Tool {
 }
 
 func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
 	}
 	raw, ok := req.GetArguments()["fields"]
 	if !ok {
@@ -158,7 +157,7 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 	if !ok {
 		return mcplib.NewToolResultError("fields must be an object"), nil
 	}
-	sum, err := h.svc.PatchFrontMatter(ctx, domain.NoteRef{Scope: scope, Path: path}, fields, req.GetString("if_match", ""))
+	sum, err := h.svc.PatchFrontMatter(ctx, ref, fields, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -176,19 +175,15 @@ func toolNoteMove() mcplib.Tool {
 }
 
 func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
 	}
 	newPath, err := req.RequireString("new_path")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	sum, err := h.svc.Move(ctx, domain.NoteRef{Scope: scope, Path: path}, newPath, req.GetString("if_match", ""))
+	sum, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -205,19 +200,15 @@ func toolNoteArchive() mcplib.Tool {
 }
 
 func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	newPath, err := toArchivePath(ref.Path)
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	newPath, err := toArchivePath(path)
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	sum, err := h.svc.Move(ctx, domain.NoteRef{Scope: scope, Path: path}, newPath, req.GetString("if_match", ""))
+	sum, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -234,16 +225,11 @@ func toolNoteDelete() mcplib.Tool {
 }
 
 func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
 	}
-	path, err := req.RequireString("path")
-	if err != nil {
-		return mcplib.NewToolResultError(err.Error()), nil
-	}
-	err = h.svc.Delete(ctx, domain.NoteRef{Scope: scope, Path: path}, req.GetBool("soft", true))
-	if err != nil {
+	if err := h.svc.Delete(ctx, ref, req.GetBool("soft", true)); err != nil {
 		return toolErr(err), nil
 	}
 	return mcplib.NewToolResultText("deleted"), nil
@@ -321,7 +307,7 @@ func toolVaultStats() mcplib.Tool {
 }
 
 func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	stats, err := h.vault.Stats(ctx)
+	stats, err := h.svc.Stats(ctx)
 	if err != nil {
 		return toolErr(err), nil
 	}
@@ -347,7 +333,6 @@ func toolErr(err error) *mcplib.CallToolResult {
 	}
 }
 
-// toArchivePath replaces the first path segment with "archives".
 func toArchivePath(path string) (string, error) {
 	_, rest, ok := strings.Cut(path, "/")
 	if !ok {

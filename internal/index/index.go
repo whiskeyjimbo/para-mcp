@@ -5,9 +5,10 @@
 package index
 
 import (
+	"cmp"
 	"maps"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -185,7 +186,7 @@ func (idx *Index) Search(text string, limit int) []Result {
 	for r, s := range scores {
 		hits = append(hits, hit{r, s})
 	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	slices.SortFunc(hits, func(a, b hit) int { return cmp.Compare(b.score, a.score) })
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -198,7 +199,6 @@ func (idx *Index) Search(text string, limit int) []Result {
 	return results
 }
 
-// writer is the single goroutine that processes all write ops.
 func (idx *Index) writer() {
 	defer close(idx.done)
 	for op := range idx.ch {
@@ -226,7 +226,6 @@ func (idx *Index) writer() {
 			close(s)
 		}
 	}
-	idx.publishSnapshot()
 }
 
 func (idx *Index) applyOp(op writeOp, signals *[]chan<- struct{}) {
@@ -242,7 +241,6 @@ func (idx *Index) applyOp(op writeOp, signals *[]chan<- struct{}) {
 
 func (idx *Index) applyAdd(doc Doc) {
 	refStr := doc.Ref.String()
-	// Remove stale postings if the doc already exists.
 	if _, exists := idx.docs[refStr]; exists {
 		idx.removePostings(refStr)
 	}
@@ -329,6 +327,7 @@ func (idx *Index) tokenize(text string) []string {
 	raw := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
+	// in-place filter: write index always lags read index
 	out := raw[:0]
 	for _, tok := range raw {
 		if len(tok) < 2 || idx.stopSet[tok] {

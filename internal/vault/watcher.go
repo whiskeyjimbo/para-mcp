@@ -47,6 +47,7 @@ type watcher struct {
 	wg            sync.WaitGroup
 	syncConflicts atomic.Int64
 	watcherStatus atomic.Value // string: "ok" | "limit_exceeded"
+	rescanActive  atomic.Bool  // guards against concurrent periodic rescans
 
 	// pending removes for rename-pair debounce: path -> deadline
 	pendingMu sync.Mutex
@@ -126,7 +127,13 @@ func (w *watcher) loop() {
 			return
 		case <-w.ticker.C:
 			// Run in a separate goroutine so a slow scan doesn't block event handling.
-			go w.vault.scanVault() //nolint:errcheck
+			// rescanActive prevents goroutine accumulation if scans take longer than the tick.
+			if w.rescanActive.CompareAndSwap(false, true) {
+				go func() {
+					defer w.rescanActive.Store(false)
+					w.vault.scanVault() //nolint:errcheck
+				}()
+			}
 		case event, ok := <-w.fw.Events:
 			if !ok {
 				return
@@ -225,31 +232,34 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 	}
 }
 
-func (w *watcher) reindexFile(absPath string) {
+// absToNP converts an absolute path to a NormalizedPath. Returns false for
+// non-markdown files or paths outside/unrecognized by the vault.
+func (w *watcher) absToNP(absPath string) (domain.NormalizedPath, bool) {
 	if !isMDFile(absPath) {
-		return
+		return domain.NormalizedPath{}, false
 	}
 	rel, err := filepath.Rel(w.vault.root, absPath)
 	if err != nil {
-		return
+		return domain.NormalizedPath{}, false
 	}
 	np, err := domain.Normalize(w.vault.root, filepath.ToSlash(rel), w.vault.caps.CaseSensitive)
 	if err != nil {
+		return domain.NormalizedPath{}, false
+	}
+	return np, true
+}
+
+func (w *watcher) reindexFile(absPath string) {
+	np, ok := w.absToNP(absPath)
+	if !ok {
 		return
 	}
 	w.vault.indexNote(absPath, np)
 }
 
 func (w *watcher) removeFromIndex(absPath string) {
-	if !isMDFile(absPath) {
-		return
-	}
-	rel, err := filepath.Rel(w.vault.root, absPath)
-	if err != nil {
-		return
-	}
-	np, err := domain.Normalize(w.vault.root, filepath.ToSlash(rel), w.vault.caps.CaseSensitive)
-	if err != nil {
+	np, ok := w.absToNP(absPath)
+	if !ok {
 		return
 	}
 	w.vault.mu.Lock()
@@ -263,22 +273,13 @@ func (w *watcher) handleRename(oldAbs, newAbs string) {
 		w.removeFromIndex(oldAbs)
 		return
 	}
-	oldRel, err := filepath.Rel(w.vault.root, oldAbs)
-	if err != nil {
-		return
-	}
-	oldNP, err := domain.Normalize(w.vault.root, filepath.ToSlash(oldRel), w.vault.caps.CaseSensitive)
-	if err != nil {
+	oldNP, ok := w.absToNP(oldAbs)
+	if !ok {
 		w.reindexFile(newAbs)
 		return
 	}
-
-	newRel, err := filepath.Rel(w.vault.root, newAbs)
-	if err != nil {
-		return
-	}
-	newNP, err := domain.Normalize(w.vault.root, filepath.ToSlash(newRel), w.vault.caps.CaseSensitive)
-	if err != nil {
+	newNP, ok := w.absToNP(newAbs)
+	if !ok {
 		w.removeFromIndex(oldAbs)
 		return
 	}

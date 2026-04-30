@@ -33,7 +33,7 @@ func main() {
 	defer v.Close()
 
 	svc := vault.NewService(v)
-	s := mcplayer.Build(svc, v)
+	s := mcplayer.Build(svc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -2,7 +2,7 @@ package domain
 
 import (
 	"encoding/hex"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/zeebo/blake3"
@@ -21,7 +21,7 @@ func ComputeETag(fm FrontMatter, body string) string {
 	canonical := canonicalFrontMatterYAML(fm)
 	input := canonical + "\n---\n" + body
 	sum := blake3.Sum256([]byte(input))
-	return `"` + hex.EncodeToString(sum[:8]) + `"` // 8 bytes = 16 hex chars
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
 }
 
 // canonicalFrontMatterYAML serializes fm to YAML with the 'derived' key removed
@@ -67,8 +67,8 @@ func sortMappingKeys(mapping *yaml.Node) {
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		pairs = append(pairs, pair{mapping.Content[i], mapping.Content[i+1]})
 	}
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].k.Value < pairs[j].k.Value
+	slices.SortFunc(pairs, func(a, b pair) int {
+		return strings.Compare(a.k.Value, b.k.Value)
 	})
 	for i, p := range pairs {
 		mapping.Content[2*i] = p.k
