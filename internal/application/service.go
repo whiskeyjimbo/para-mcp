@@ -188,5 +188,5 @@ func (s *NoteService) normalizeRef(ref domain.NoteRef) (domain.NormalizedPath, e
 }
 
 func (s *NoteService) normalizePath(path string) (domain.NormalizedPath, error) {
-	return domain.Normalize("", path, s.vault.Capabilities().CaseSensitive)
+	return domain.Normalize(path, s.vault.Capabilities().CaseSensitive)
 }

@@ -2,6 +2,8 @@ package localvault
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -245,5 +247,54 @@ func TestNoteService_RejectsNonPARARoot(t *testing.T) {
 	_, err := svc.Get(ctx, domain.NoteRef{Scope: "personal", Path: "notes/foo.md"})
 	if err == nil {
 		t.Fatal("expected error for non-PARA root via NoteService")
+	}
+}
+
+func TestCheckSymlinks_OutsideVault(t *testing.T) {
+	vault := t.TempDir()
+	outsideTarget := t.TempDir()
+
+	projDir := filepath.Join(vault, "projects")
+	if err := os.Mkdir(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	evilFile := filepath.Join(outsideTarget, "evil.md")
+	if err := os.WriteFile(evilFile, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(projDir, "evil.md")
+	if err := os.Symlink(evilFile, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkSymlinks(vault, "projects/evil.md"); err == nil {
+		t.Fatal("expected error for symlink pointing outside vault")
+	}
+}
+
+func TestCheckSymlinks_InsideVault(t *testing.T) {
+	vault := t.TempDir()
+	projDir := filepath.Join(vault, "projects")
+	if err := os.Mkdir(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(projDir, "real.md")
+	if err := os.WriteFile(target, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(projDir, "alias.md")
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkSymlinks(vault, "projects/alias.md"); err != nil {
+		t.Fatalf("expected no error for in-vault symlink: %v", err)
+	}
+}
+
+func TestCheckSymlinks_NonExistentPath(t *testing.T) {
+	vault := t.TempDir()
+	if err := checkSymlinks(vault, "projects/new-note.md"); err != nil {
+		t.Fatalf("non-existent path should not error: %v", err)
 	}
 }

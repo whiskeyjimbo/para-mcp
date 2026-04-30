@@ -3,6 +3,7 @@ package localvault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -116,7 +117,7 @@ func (v *LocalVault) IndexFile(absPath string) {
 	if err != nil {
 		return
 	}
-	np, err := domain.Normalize(v.root, filepath.ToSlash(rel), v.caps.CaseSensitive)
+	np, err := v.normalizePath(filepath.ToSlash(rel))
 	if err != nil {
 		return
 	}
@@ -135,7 +136,7 @@ func (v *LocalVault) RemoveFile(absPath string) {
 	if err != nil {
 		return
 	}
-	np, err := domain.Normalize(v.root, filepath.ToSlash(rel), v.caps.CaseSensitive)
+	np, err := v.normalizePath(filepath.ToSlash(rel))
 	if err != nil {
 		return
 	}
@@ -542,7 +543,49 @@ func runBatch[I any](items []I, fn func(I) (path string, sum domain.NoteSummary,
 }
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {
-	return domain.Normalize(v.root, path, v.caps.CaseSensitive)
+	np, err := domain.Normalize(path, v.caps.CaseSensitive)
+	if err != nil {
+		return domain.NormalizedPath{}, err
+	}
+	if err := checkSymlinks(v.root, np.Storage); err != nil {
+		return domain.NormalizedPath{}, err
+	}
+	return np, nil
+}
+
+func checkSymlinks(vaultRoot, path string) error {
+	abs := filepath.Join(vaultRoot, path)
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		real, err = evalSymlinksPartial(abs)
+		if err != nil {
+			return nil
+		}
+	}
+	vaultReal, err := filepath.EvalSymlinks(vaultRoot)
+	if err != nil {
+		return nil
+	}
+	prefix := vaultReal + string(filepath.Separator)
+	if real != vaultReal && !strings.HasPrefix(real, prefix) {
+		return fmt.Errorf("path resolves outside vault root")
+	}
+	return nil
+}
+
+func evalSymlinksPartial(abs string) (string, error) {
+	p := abs
+	for {
+		parent := filepath.Dir(p)
+		if parent == p {
+			return "", errors.New("no existing ancestor found")
+		}
+		p = parent
+		real, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			return real, nil
+		}
+	}
 }
 
 func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
@@ -654,7 +697,7 @@ func (v *LocalVault) scanVault() error {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		np, err := domain.Normalize(v.root, rel, v.caps.CaseSensitive)
+		np, err := v.normalizePath(rel)
 		if err != nil {
 			return nil
 		}

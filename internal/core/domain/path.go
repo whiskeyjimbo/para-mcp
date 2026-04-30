@@ -18,7 +18,7 @@ type NormalizedPath struct {
 }
 
 // Normalize validates a vault-relative path and returns its canonical forms.
-func Normalize(vaultRoot, path string, caseSensitive bool) (NormalizedPath, error) {
+func Normalize(path string, caseSensitive bool) (NormalizedPath, error) {
 	if strings.ContainsRune(path, 0) {
 		return NormalizedPath{}, errors.New("path contains null byte")
 	}
@@ -41,12 +41,6 @@ func Normalize(vaultRoot, path string, caseSensitive bool) (NormalizedPath, erro
 	case "projects", "areas", "resources", "archives", ".trash":
 	default:
 		return NormalizedPath{}, fmt.Errorf("path must begin with a PARA category (projects|areas|resources|archives|.trash), got %q", seg)
-	}
-
-	if vaultRoot != "" {
-		if err := checkSymlinks(vaultRoot, cleaned); err != nil {
-			return NormalizedPath{}, err
-		}
 	}
 
 	indexKey := cleaned
@@ -73,39 +67,4 @@ func ArchivePath(path string) (string, error) {
 		return "", fmt.Errorf("path has no directory segment: %q", path)
 	}
 	return "archives/" + rest, nil
-}
-
-func checkSymlinks(vaultRoot, path string) error {
-	abs := filepath.Join(vaultRoot, path)
-	real, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		real, err = evalSymlinksPartial(abs)
-		if err != nil {
-			return nil
-		}
-	}
-	vaultReal, err := filepath.EvalSymlinks(vaultRoot)
-	if err != nil {
-		return nil
-	}
-	prefix := vaultReal + string(filepath.Separator)
-	if real != vaultReal && !strings.HasPrefix(real, prefix) {
-		return fmt.Errorf("path resolves outside vault root")
-	}
-	return nil
-}
-
-func evalSymlinksPartial(abs string) (string, error) {
-	p := abs
-	for {
-		parent := filepath.Dir(p)
-		if parent == p {
-			return "", errors.New("no existing ancestor found")
-		}
-		p = parent
-		real, err := filepath.EvalSymlinks(p)
-		if err == nil {
-			return real, nil
-		}
-	}
 }
