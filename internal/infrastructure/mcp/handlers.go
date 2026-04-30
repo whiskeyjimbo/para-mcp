@@ -148,10 +148,7 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 }
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
-	cats := make([]domain.Category, 0, len(req.GetStringSlice("categories", nil)))
-	for _, c := range req.GetStringSlice("categories", nil) {
-		cats = append(cats, domain.Category(c))
-	}
+	cats := parseCategorySlice(req.GetStringSlice("categories", nil))
 	result, err := h.svc.Query(ctx, domain.NewQueryRequest(
 		domain.WithQueryFilter(domain.NewFilter(
 			domain.WithStatus(req.GetString("status", "")),
@@ -229,10 +226,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	if days <= 0 {
 		return mcplib.NewToolResultError("days must be > 0"), nil
 	}
-	cats := make([]domain.Category, 0, len(req.GetStringSlice("categories", nil)))
-	for _, c := range req.GetStringSlice("categories", nil) {
-		cats = append(cats, domain.Category(c))
-	}
+	cats := parseCategorySlice(req.GetStringSlice("categories", nil))
 	result, err := h.svc.Stale(ctx, days, cats, req.GetString("status", ""), req.GetInt("limit", defaultListLimit), domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
 		return toolErr(err), nil
@@ -407,6 +401,14 @@ func jsonResult(v any) (*mcplib.CallToolResult, error) {
 		return mcplib.NewToolResultError(fmt.Sprintf("marshal: %v", err)), nil
 	}
 	return mcplib.NewToolResultText(string(b)), nil
+}
+
+func parseCategorySlice(raw []string) []domain.Category {
+	cats := make([]domain.Category, 0, len(raw))
+	for _, c := range raw {
+		cats = append(cats, domain.Category(c))
+	}
+	return cats
 }
 
 var errPrefixes = []struct {
