@@ -153,6 +153,12 @@ func toolNotesCreateBatch() mcplib.Tool {
 	)
 }
 
+func toolVaultListScopes() mcplib.Tool {
+	return mcplib.NewTool("vault_list_scopes",
+		mcplib.WithDescription("List all vault scopes visible to this server, with their capabilities."),
+	)
+}
+
 func toolNotesUpdateBatch() mcplib.Tool {
 	return mcplib.NewTool("notes_update_batch",
 		mcplib.WithDescription("Update bodies for multiple notes. Each note is independent: one failure does not affect siblings."),

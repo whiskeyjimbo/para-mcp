@@ -110,6 +110,12 @@ type RankedNote struct {
 	Score   float64
 }
 
+// ScopeInfo describes a single vault scope visible to the caller.
+type ScopeInfo struct {
+	Scope        ScopeID      `json:"scope"`
+	Capabilities Capabilities `json:"capabilities"`
+}
+
 // VaultStats holds aggregate counts for a vault.
 type VaultStats struct {
 	TotalNotes int

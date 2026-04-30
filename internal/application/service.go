@@ -161,6 +161,10 @@ func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {
 	return s.vault.Stats(ctx)
 }
 
+func (s *NoteService) ListScopes(_ context.Context) []domain.ScopeInfo {
+	return []domain.ScopeInfo{{Scope: s.vault.Scope(), Capabilities: s.vault.Capabilities()}}
+}
+
 func (s *NoteService) Health(ctx context.Context) (domain.VaultHealth, error) {
 	return s.vault.Health(ctx)
 }

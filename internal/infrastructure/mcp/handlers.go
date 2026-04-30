@@ -9,10 +9,11 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
 
 type handlers struct {
-	svc    NotePort
+	svc    ports.NoteService
 	scopes ScopesFunc
 	clock  func() time.Time
 }
@@ -262,6 +263,10 @@ func (h *handlers) vaultRescan(ctx context.Context, _ mcplib.CallToolRequest) (*
 		return toolErr(err), nil
 	}
 	return mcplib.NewToolResultText("rescan complete"), nil
+}
+
+func (h *handlers) vaultListScopes(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return jsonResult(h.svc.ListScopes(ctx))
 }
 
 func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
