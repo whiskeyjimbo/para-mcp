@@ -77,6 +77,21 @@ func (n Note) Category() Category {
 	return c
 }
 
+// Summary projects a Note into a NoteSummary for list and query responses.
+func (n Note) Summary() NoteSummary {
+	cat, _ := CategoryFromPath(n.Ref.Path)
+	return NoteSummary{
+		Ref:       n.Ref,
+		Title:     n.FrontMatter.Title,
+		Tags:      n.FrontMatter.Tags,
+		Status:    n.FrontMatter.Status,
+		Area:      n.FrontMatter.Area,
+		Project:   n.FrontMatter.Project,
+		Category:  cat,
+		UpdatedAt: n.FrontMatter.UpdatedAt,
+	}
+}
+
 // IndexState reports where a note is in the semantic pipeline.
 type IndexState string
 

@@ -246,7 +246,7 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		if err != nil {
 			return err
 		}
-		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
+		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
 		links := parseLinks(in.Body)
 		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
 		v.idx.Add(summaryToDoc(result.Summary, in.Body))
@@ -280,7 +280,7 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 		if err := os.WriteFile(absPath, data, 0o644); err != nil {
 			return err
 		}
-		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
+		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
 		links := parseLinks(body)
 		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
 		v.idx.Add(summaryToDoc(result.Summary, body))
@@ -313,7 +313,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 		if err := os.WriteFile(filepath.Join(v.root, np.Storage), data, 0o644); err != nil {
 			return err
 		}
-		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
+		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
 		existingLinks := v.graph.Links(np.Storage)
 		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, existingLinks)
 		return nil
@@ -347,7 +347,7 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 			return err
 		}
 		note.Ref.Path = nnp.Storage
-		result = domain.MutationResult{Summary: v.noteToSummary(note), ETag: note.ETag}
+		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
 		links := parseLinks(note.Body)
 		v.cache.Move(np.IndexKey, nnp.IndexKey, result.Summary)
 		v.graph.Remove(np.Storage)
@@ -640,20 +640,6 @@ func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
 	return note, nil
 }
 
-func (v *LocalVault) noteToSummary(note domain.Note) domain.NoteSummary {
-	cat, _ := domain.CategoryFromPath(note.Ref.Path)
-	return domain.NoteSummary{
-		Ref:       note.Ref,
-		Title:     note.FrontMatter.Title,
-		Tags:      note.FrontMatter.Tags,
-		Status:    note.FrontMatter.Status,
-		Area:      note.FrontMatter.Area,
-		Project:   note.FrontMatter.Project,
-		Category:  cat,
-		UpdatedAt: note.FrontMatter.UpdatedAt,
-	}
-}
-
 func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
 	v.cache.Set(indexKey, s)
 	v.graph.Upsert(storagePath, links)
@@ -704,7 +690,7 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 			}
 		}
 	}
-	s := v.noteToSummary(note)
+	s := note.Summary()
 	links := parseLinks(note.Body)
 	v.upsertWithLinks(np.IndexKey, np.Storage, s, links)
 	v.idx.Add(summaryToDoc(s, note.Body))
