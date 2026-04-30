@@ -70,16 +70,22 @@ var summaryComparators = map[SortField]func(a, b NoteSummary) int{
 }
 
 // SortSummaries sorts notes in-place by field; desc reverses the order.
-// Unknown fields fall back to SortByUpdated.
+// Unknown fields fall back to SortByUpdated. Path is always used as the
+// secondary sort key so results are deterministic across calls even when
+// the backing store returns notes in non-deterministic order (e.g. map iteration).
 func SortSummaries(notes []NoteSummary, field SortField, desc bool) {
 	cmp, ok := summaryComparators[field]
 	if !ok {
 		cmp = summaryComparators[SortByUpdated]
 	}
-	slices.SortStableFunc(notes, func(a, b NoteSummary) int {
+	slices.SortFunc(notes, func(a, b NoteSummary) int {
+		n := cmp(a, b)
 		if desc {
-			return -cmp(a, b)
+			n = -n
 		}
-		return cmp(a, b)
+		if n != 0 {
+			return n
+		}
+		return strings.Compare(a.Ref.Path, b.Ref.Path)
 	})
 }

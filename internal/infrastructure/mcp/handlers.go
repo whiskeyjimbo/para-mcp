@@ -388,7 +388,7 @@ func stringSliceVal(m map[string]any, key string) []string {
 // all summary fields at the top level alongside the ETag concurrency token.
 type mutationResult struct {
 	domain.NoteSummary
-	ETag string `json:"etag"`
+	ETag string `json:"ETag"`
 }
 
 func flatMutation(r domain.MutationResult) mutationResult {
