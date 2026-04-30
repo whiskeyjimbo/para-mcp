@@ -409,19 +409,22 @@ func jsonResult(v any) (*mcplib.CallToolResult, error) {
 	return mcplib.NewToolResultText(string(b)), nil
 }
 
+var errPrefixes = []struct {
+	sentinel error
+	prefix   string
+}{
+	{domain.ErrNotFound, "not_found"},
+	{domain.ErrConflict, "conflict"},
+	{domain.ErrInvalidPath, "invalid_path"},
+	{domain.ErrInvalidFrontMatter, "invalid_frontmatter"},
+	{domain.ErrScopeForbidden, "scope_forbidden"},
+}
+
 func toolErr(err error) *mcplib.CallToolResult {
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return mcplib.NewToolResultError("not_found: " + err.Error())
-	case errors.Is(err, domain.ErrConflict):
-		return mcplib.NewToolResultError("conflict: " + err.Error())
-	case errors.Is(err, domain.ErrInvalidPath):
-		return mcplib.NewToolResultError("invalid_path: " + err.Error())
-	case errors.Is(err, domain.ErrInvalidFrontMatter):
-		return mcplib.NewToolResultError("invalid_frontmatter: " + err.Error())
-	case errors.Is(err, domain.ErrScopeForbidden):
-		return mcplib.NewToolResultError("scope_forbidden: " + err.Error())
-	default:
-		return mcplib.NewToolResultError(err.Error())
+	for _, e := range errPrefixes {
+		if errors.Is(err, e.sentinel) {
+			return mcplib.NewToolResultError(e.prefix + ": " + err.Error())
+		}
 	}
+	return mcplib.NewToolResultError(err.Error())
 }
