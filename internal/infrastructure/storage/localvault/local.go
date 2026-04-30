@@ -228,7 +228,7 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 		}
 		note.FrontMatter.UpdatedAt = v.clock().UTC()
 		note.Body = body
-		note.ETag = domain.ComputeETag(note.FrontMatter, body)
+		note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(note.FrontMatter), body)
 		data, err := formatNote(note.FrontMatter, body)
 		if err != nil {
 			return err
@@ -262,7 +262,7 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 		}
 		domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
 		note.FrontMatter.UpdatedAt = v.clock().UTC()
-		note.ETag = domain.ComputeETag(note.FrontMatter, note.Body)
+		note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(note.FrontMatter), note.Body)
 		data, err := formatNote(note.FrontMatter, note.Body)
 		if err != nil {
 			return err
@@ -606,7 +606,7 @@ func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
 		FrontMatter: fm,
 		Body:        body,
 	}
-	note.ETag = domain.ComputeETag(fm, body)
+	note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(fm), body)
 	return note, nil
 }
 

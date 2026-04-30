@@ -3,12 +3,10 @@ package domain
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestComputeETag_format(t *testing.T) {
-	fm := FrontMatter{Title: "Test"}
-	etag := ComputeETag(fm, "body")
+	etag := ComputeETag("title: Test", "body")
 	if !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
 		t.Fatalf("ETag not quoted: %q", etag)
 	}
@@ -24,54 +22,23 @@ func TestComputeETag_format(t *testing.T) {
 }
 
 func TestComputeETag_deterministic(t *testing.T) {
-	fm := FrontMatter{Title: "Hello", Tags: []string{"aws", "infra"}}
-	a := ComputeETag(fm, "body text")
-	b := ComputeETag(fm, "body text")
+	a := ComputeETag("title: Hello\ntags:\n  - aws\n  - infra", "body text")
+	b := ComputeETag("title: Hello\ntags:\n  - aws\n  - infra", "body text")
 	if a != b {
 		t.Fatalf("ETag not deterministic: %q vs %q", a, b)
 	}
 }
 
 func TestComputeETag_bodyChangeRotates(t *testing.T) {
-	fm := FrontMatter{Title: "Hello"}
-	a := ComputeETag(fm, "body one")
-	b := ComputeETag(fm, "body two")
+	a := ComputeETag("title: Hello", "body one")
+	b := ComputeETag("title: Hello", "body two")
 	if a == b {
 		t.Fatal("body change should rotate ETag")
 	}
 }
 
-func TestComputeETag_derivedExcluded(t *testing.T) {
-	fm1 := FrontMatter{Title: "Hello", Extra: map[string]any{}}
-	fm2 := FrontMatter{Title: "Hello", Extra: map[string]any{
-		"derived": map[string]any{"summary": "some AI summary"},
-	}}
-	a := ComputeETag(fm1, "body")
-	b := ComputeETag(fm2, "body")
-	if a != b {
-		t.Fatalf("derived field should not affect ETag: %q vs %q", a, b)
-	}
-}
-
-func TestComputeETag_mtimeExcluded(t *testing.T) {
-	fm1 := FrontMatter{Title: "Hello", UpdatedAt: time.Now()}
-	fm2 := FrontMatter{Title: "Hello", UpdatedAt: time.Now().Add(1e9)}
-	_ = ComputeETag(fm1, "body")
-	_ = ComputeETag(fm2, "body")
-}
-
-func TestComputeETag_keyOrderIrrelevant(t *testing.T) {
-	fm1 := FrontMatter{Extra: map[string]any{"z_key": "val1", "a_key": "val2"}}
-	fm2 := FrontMatter{Extra: map[string]any{"a_key": "val2", "z_key": "val1"}}
-	a := ComputeETag(fm1, "body")
-	b := ComputeETag(fm2, "body")
-	if a != b {
-		t.Fatalf("key order should not affect ETag: %q vs %q", a, b)
-	}
-}
-
 func TestComputeETag_noWPrefix(t *testing.T) {
-	etag := ComputeETag(FrontMatter{Title: "x"}, "y")
+	etag := ComputeETag("title: x", "y")
 	if strings.HasPrefix(etag, "W/") {
 		t.Fatalf("ETag must not have W/ prefix: %q", etag)
 	}
