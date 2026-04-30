@@ -109,6 +109,8 @@ func toolNoteCreate() mcplib.Tool {
 		mcplib.WithString("title", mcplib.Description("Note title")),
 		mcplib.WithString("body", mcplib.Description("Markdown body")),
 		mcplib.WithString("status", mcplib.Description("Note status, e.g. active")),
+		mcplib.WithString("area", mcplib.Description("PARA area this note belongs to")),
+		mcplib.WithString("project", mcplib.Description("PARA project this note belongs to")),
 		mcplib.WithArray("tags", mcplib.WithStringItems(), mcplib.Description("Tags to apply")),
 	)
 }
@@ -121,9 +123,11 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 	in := domain.CreateInput{
 		Path: path,
 		FrontMatter: domain.FrontMatter{
-			Title:  req.GetString("title", ""),
-			Status: req.GetString("status", ""),
-			Tags:   req.GetStringSlice("tags", nil),
+			Title:   req.GetString("title", ""),
+			Status:  req.GetString("status", ""),
+			Area:    req.GetString("area", ""),
+			Project: req.GetString("project", ""),
+			Tags:    req.GetStringSlice("tags", nil),
 		},
 		Body: req.GetString("body", ""),
 	}
@@ -460,7 +464,7 @@ func (h *handlers) vaultRescan(ctx context.Context, _ mcplib.CallToolRequest) (*
 func toolNotesCreateBatch() mcplib.Tool {
 	return mcplib.NewTool("notes_create_batch",
 		mcplib.WithDescription("Create multiple notes. Each note is independent: one failure does not prevent others from being created."),
-		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of note objects. Each must have "path"; optional: "title", "body", "status", "tags"`)),
+		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of note objects. Each must have "path"; optional: "title", "body", "status", "area", "project", "tags"`)),
 	)
 }
 
@@ -487,9 +491,11 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 			Path: path,
 			Body: stringVal(obj, "body"),
 			FrontMatter: domain.FrontMatter{
-				Title:  stringVal(obj, "title"),
-				Status: stringVal(obj, "status"),
-				Tags:   stringSliceVal(obj, "tags"),
+				Title:   stringVal(obj, "title"),
+				Status:  stringVal(obj, "status"),
+				Area:    stringVal(obj, "area"),
+				Project: stringVal(obj, "project"),
+				Tags:    stringSliceVal(obj, "tags"),
 			},
 		}
 		inputs = append(inputs, in)

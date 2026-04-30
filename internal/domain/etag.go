@@ -32,11 +32,15 @@ func canonicalFrontMatterYAML(fm FrontMatter) string {
 		// FrontMatter is a known type; encoding failure is a programmer error.
 		panic("canonicalFrontMatterYAML: " + err.Error())
 	}
-	// doc is a Document node; Content[0] is the Mapping node.
-	if len(doc.Content) == 0 {
-		return ""
+	// yaml.Node.Encode populates doc as a MappingNode directly (not DocumentNode).
+	// If it produced a DocumentNode, unwrap to the Mapping child.
+	mapping := &doc
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) == 0 {
+			return ""
+		}
+		mapping = doc.Content[0]
 	}
-	mapping := doc.Content[0]
 	removeMappingKey(mapping, "derived")
 	sortMappingKeys(mapping)
 

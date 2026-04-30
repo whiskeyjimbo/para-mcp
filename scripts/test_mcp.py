@@ -228,6 +228,8 @@ def run_tests(c: MCPClient):
         "body": "This is a vpc configuration guide.",
         "status": "active",
         "tags": ["aws", "#Cloud"],
+        "area": "infrastructure",
+        "project": "vpc-setup",
     })
     is_err, text = check_ok("create projects/hello.md", resp)
     etag_hello = None
@@ -236,6 +238,8 @@ def run_tests(c: MCPClient):
         check("title set", data and data.get("Title") == "Hello World", str(data))
         check("tags normalized", data and "aws" in data.get("Tags", []), str(data))
         check("tags normalized #Cloud→cloud", data and "cloud" in data.get("Tags", []), str(data))
+        check("area set", data and data.get("Area") == "infrastructure", str(data))
+        check("project set", data and data.get("Project") == "vpc-setup", str(data))
         check("ETag present", data and bool(data.get("ETag")), str(data))
         etag_hello = data.get("ETag") if data else None
 
@@ -248,6 +252,10 @@ def run_tests(c: MCPClient):
     resp = c.call("note_create", {"path": "../etc/passwd"})
     check_err("path traversal → error", resp)
 
+    # Additional path escapes
+    resp = c.call("note_create", {"path": "projects/\x00null.md"})
+    check_err("null byte in path → error", resp)
+
     section("note_get")
     resp = c.call("note_get", {"scope": "personal", "path": "projects/hello.md"})
     is_err, text = check_ok("get projects/hello.md", resp)
@@ -255,6 +263,12 @@ def run_tests(c: MCPClient):
         data = parse_json(text)
         check("body round-trips", data and "vpc configuration" in data.get("Body", ""), str(data))
         check("ETag matches create", data and data.get("ETag") == etag_hello, str(data))
+        # NoteID must be minted into derived.note_id on every MCP-created note
+        fm = data.get("FrontMatter", {}) if data else {}
+        note_id = fm.get("Extra", {}).get("derived", {}).get("note_id", "")
+        check("NoteID minted in derived.note_id", bool(note_id), str(fm))
+        check("area round-trips", fm.get("Area") == "infrastructure", str(fm))
+        check("project round-trips", fm.get("Project") == "vpc-setup", str(fm))
 
     resp = c.call("note_get", {"scope": "personal", "path": "projects/nope.md"})
     check_err("get missing → not_found", resp, "not_found")
@@ -270,8 +284,16 @@ def run_tests(c: MCPClient):
     etag_hello2 = None
     if not is_err:
         data = parse_json(text)
-        check("ETag rotated", data and data.get("ETag") != etag_hello, str(data))
+        check("ETag rotated after update", data and data.get("ETag") != etag_hello, str(data))
         etag_hello2 = data.get("ETag") if data else None
+
+    # Verify body actually changed
+    resp = c.call("note_get", {"scope": "personal", "path": "projects/hello.md"})
+    is_err, text = check_ok("get after body update", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("body contains new content", data and "Updated body content" in data.get("Body", ""), str(data))
+        check("body no longer has old content", data and "vpc configuration" not in data.get("Body", ""), str(data))
 
     resp = c.call("note_update_body", {
         "scope": "personal",
@@ -280,6 +302,17 @@ def run_tests(c: MCPClient):
         "if_match": etag_hello,  # stale
     })
     check_err("stale ETag → conflict", resp, "conflict")
+
+    # Force overwrite (no if_match)
+    resp = c.call("note_update_body", {
+        "scope": "personal",
+        "path": "projects/hello.md",
+        "body": "Force overwrite body.",
+    })
+    is_err, text = check_ok("update body without if_match (force overwrite)", resp)
+    if not is_err:
+        data = parse_json(text)
+        etag_hello2 = data.get("ETag") if data else etag_hello2
 
     section("note_patch_frontmatter")
     resp = c.call("note_patch_frontmatter", {
@@ -294,7 +327,27 @@ def run_tests(c: MCPClient):
         data = parse_json(text)
         check("status updated", data and data.get("Status") == "done", str(data))
         check("title updated", data and data.get("Title") == "Hello Done", str(data))
+        check("ETag rotated after patch", data and data.get("ETag") != etag_hello2, str(data))
         etag_hello3 = data.get("ETag") if data else None
+
+    # Stale ETag on patch → conflict
+    resp = c.call("note_patch_frontmatter", {
+        "scope": "personal",
+        "path": "projects/hello.md",
+        "fields": {"status": "stale"},
+        "if_match": etag_hello2,  # stale
+    })
+    check_err("stale ETag on patch → conflict", resp, "conflict")
+
+    # Other fields preserved after patch
+    resp = c.call("note_get", {"scope": "personal", "path": "projects/hello.md"})
+    is_err, text = check_ok("get after patch to verify preservation", resp)
+    if not is_err:
+        data = parse_json(text)
+        fm = data.get("FrontMatter", {}) if data else {}
+        check("area preserved after patch", fm.get("Area") == "infrastructure", str(fm))
+        check("project preserved after patch", fm.get("Project") == "vpc-setup", str(fm))
+        check("tags preserved after patch", "aws" in (fm.get("Tags") or []), str(fm))
 
     section("note_move")
     resp = c.call("note_move", {
@@ -314,6 +367,29 @@ def run_tests(c: MCPClient):
     resp = c.call("note_get", {"scope": "personal", "path": "areas/hello.md"})
     check_ok("new path accessible after move", resp)
 
+    # Stale ETag on move → conflict
+    c.call("note_create", {"path": "projects/move-stale.md", "body": "stale move test"})
+    resp2 = c.call("note_get", {"scope": "personal", "path": "projects/move-stale.md"})
+    _, t2 = result_content(resp2)
+    etag_stale = parse_json(t2).get("ETag") if t2 else None
+    # mutate to make the ETag stale
+    c.call("note_update_body", {"scope": "personal", "path": "projects/move-stale.md", "body": "mutated"})
+    resp = c.call("note_move", {
+        "scope": "personal",
+        "path": "projects/move-stale.md",
+        "new_path": "areas/move-stale.md",
+        "if_match": etag_stale,
+    })
+    check_err("move with stale ETag → conflict", resp, "conflict")
+
+    # Move to non-PARA root → error
+    resp = c.call("note_move", {
+        "scope": "personal",
+        "path": "projects/move-stale.md",
+        "new_path": "notes/move-stale.md",
+    })
+    check_err("move to non-PARA root → error", resp)
+
     section("note_archive")
     resp = c.call("note_create", {"path": "projects/to-archive.md", "body": "archive me"})
     _, text = result_content(resp)
@@ -329,9 +405,22 @@ def run_tests(c: MCPClient):
         data = parse_json(text)
         check("moved to archives/", data and data.get("Ref", {}).get("Path", "").startswith("archives/"), str(data))
 
+    # Archive with stale ETag → conflict
+    resp = c.call("note_create", {"path": "projects/to-archive-stale.md", "body": "archive stale"})
+    _, t2 = result_content(resp)
+    etag_arch_stale = parse_json(t2).get("ETag") if t2 else None
+    c.call("note_update_body", {"scope": "personal", "path": "projects/to-archive-stale.md", "body": "mutated"})
+    resp = c.call("note_archive", {
+        "scope": "personal",
+        "path": "projects/to-archive-stale.md",
+        "if_match": etag_arch_stale,
+    })
+    check_err("archive with stale ETag → conflict", resp, "conflict")
+
     section("notes_list")
     c.call("note_create", {"path": "resources/guide.md", "body": "resource content", "tags": ["aws"]})
-    c.call("note_create", {"path": "projects/second.md", "status": "active"})
+    c.call("note_create", {"path": "projects/second.md", "status": "active",
+                           "area": "myarea", "project": "myproj", "tags": ["listtag"]})
 
     resp = c.call("notes_list", {})
     is_err, text = check_ok("list all notes", resp)
@@ -357,25 +446,101 @@ def run_tests(c: MCPClient):
               all(n.get("Ref", {}).get("Path", "").startswith("projects/") for n in notes),
               str(notes))
 
+    # Area filter
+    resp = c.call("notes_list", {"area": "myarea"})
+    is_err, text = check_ok("list by area=myarea", resp)
+    if not is_err:
+        data = parse_json(text)
+        notes = data.get("Notes", []) if data else []
+        check("area filter returns matching notes", len(notes) >= 1, str(notes))
+        check("all returned notes have area=myarea",
+              all(n.get("Area") == "myarea" for n in notes), str(notes))
+
+    # Project filter
+    resp = c.call("notes_list", {"project": "myproj"})
+    is_err, text = check_ok("list by project=myproj", resp)
+    if not is_err:
+        data = parse_json(text)
+        notes = data.get("Notes", []) if data else []
+        check("project filter returns matching notes", len(notes) >= 1, str(notes))
+        check("all returned notes have project=myproj",
+              all(n.get("Project") == "myproj" for n in notes), str(notes))
+
+    # Tags filter
+    resp = c.call("notes_list", {"tags": ["listtag"]})
+    is_err, text = check_ok("list by tags=[listtag]", resp)
+    if not is_err:
+        data = parse_json(text)
+        notes = data.get("Notes", []) if data else []
+        check("tag filter returns matching notes", len(notes) >= 1, str(notes))
+        check("all returned notes have listtag",
+              all("listtag" in (n.get("Tags") or []) for n in notes), str(notes))
+
+    # Pagination: limit + HasMore
     resp = c.call("notes_list", {"limit": 1, "sort": "updated_at"})
     is_err, text = check_ok("list with limit=1", resp)
     if not is_err:
         data = parse_json(text)
         check("exactly 1 result", data and len(data.get("Notes", [])) == 1, str(data))
-        check("has_more when total > 1", data and data.get("Total", 0) > 1, str(data))
+        check("HasMore=true when total > 1", data and data.get("HasMore") is True, str(data))
+        check("Total > 1", data and data.get("Total", 0) > 1, str(data))
+
+    # Offset pagination: page 2
+    resp_p1 = c.call("notes_list", {"limit": 1, "offset": 0, "sort": "title"})
+    resp_p2 = c.call("notes_list", {"limit": 1, "offset": 1, "sort": "title"})
+    _, t1 = result_content(resp_p1)
+    _, t2 = result_content(resp_p2)
+    d1 = parse_json(t1)
+    d2 = parse_json(t2)
+    if d1 and d2:
+        p1_path = d1["Notes"][0]["Ref"]["Path"] if d1.get("Notes") else ""
+        p2_path = d2["Notes"][0]["Ref"]["Path"] if d2.get("Notes") else ""
+        check("offset pagination returns different notes", p1_path != p2_path,
+              f"p1={p1_path} p2={p2_path}")
+
+    # Descending sort
+    resp_asc = c.call("notes_list", {"sort": "title", "desc": False, "limit": 100})
+    resp_desc = c.call("notes_list", {"sort": "title", "desc": True, "limit": 100})
+    _, ta = result_content(resp_asc)
+    _, td = result_content(resp_desc)
+    da = parse_json(ta)
+    dd = parse_json(td)
+    if da and dd and da.get("Notes") and dd.get("Notes"):
+        asc_titles = [n.get("Title", "") for n in da["Notes"]]
+        desc_titles = [n.get("Title", "") for n in dd["Notes"]]
+        check("desc sort is reverse of asc sort",
+              asc_titles == list(reversed(desc_titles)), f"asc={asc_titles} desc={desc_titles}")
+
+    # include_archives: archived notes excluded by default but visible with the category filter
+    resp = c.call("notes_list", {"categories": ["archives"]})
+    is_err, text = check_ok("list archives category", resp)
+    if not is_err:
+        data = parse_json(text)
+        notes = data.get("Notes", []) if data else []
+        check("archives category returns archived notes", len(notes) >= 1, str(notes))
+        check("all notes are in archives/",
+              all(n.get("Ref", {}).get("Path", "").startswith("archives/") for n in notes), str(notes))
 
     section("notes_search")
     c.call("note_create", {"path": "resources/searchable.md",
-                           "body": "unique_searchterm_xk9 about distributed systems"})
+                           "body": "unique_searchterm_xk9 about distributed systems",
+                           "title": "Unique Title Zq7"})
     time.sleep(150 / 1000)  # let the BM25 writer goroutine publish the snapshot
 
     resp = c.call("notes_search", {"text": "unique_searchterm_xk9", "limit": 5})
-    is_err, text = check_ok("search for unique term", resp)
+    is_err, text = check_ok("search for unique body term", resp)
     if not is_err:
         results = parse_json(text)
         check("found at least one result", results is not None and len(results) > 0, str(results))
         if results:
-            check("top result has Score", results[0].get("Score", 0) > 0, str(results[0]))
+            check("top result has Score > 0", results[0].get("Score", 0) > 0, str(results[0]))
+
+    # Title search (title has higher boost weight in BM25)
+    resp = c.call("notes_search", {"text": "Unique Title Zq7", "limit": 5})
+    is_err, text = check_ok("search by title term", resp)
+    if not is_err:
+        results = parse_json(text)
+        check("title search returns result", results is not None and len(results) > 0, str(results))
 
     resp = c.call("notes_search", {"text": "xyzzy_nonexistent_term_8675309"})
     is_err, text = check_ok("search with no matches", resp)
@@ -384,23 +549,15 @@ def run_tests(c: MCPClient):
         check("empty results for unknown term", results is not None and len(results) == 0, str(results))
 
     section("scope_resolver")
-    # The server wires AllowedScopes from a server-side ScopesFunc, never from
-    # wire input. These tests verify that the resolver is active and correct:
-    # notes in the personal vault are visible, and the scope string supplied
-    # by the caller in NoteRef is validated (must match the vault's scope).
-
-    # Scope field in NoteRef must be "personal" for the single-vault build.
     resp = c.call("note_get", {"scope": "wrong-scope", "path": "areas/hello.md"})
     check_err("wrong scope on note_get → error", resp)
 
-    # notes_list returns notes because AllowedScopes = ["personal"] includes the vault.
     resp = c.call("notes_list", {})
     is_err, text = check_ok("notes_list succeeds (scopes resolver active)", resp)
     if not is_err:
         data = parse_json(text)
         check("notes_list returns non-empty result", data and data.get("Total", 0) > 0, str(data))
 
-    # notes_search returns results because AllowedScopes includes personal vault.
     resp = c.call("notes_search", {"text": "unique_searchterm_xk9"})
     is_err, text = check_ok("notes_search succeeds (scopes resolver active)", resp)
     if not is_err:
@@ -413,7 +570,15 @@ def run_tests(c: MCPClient):
     if not is_err:
         data = parse_json(text)
         check("TotalNotes > 0", data and data.get("TotalNotes", 0) > 0, str(data))
-        check("ByCategory present", data and "ByCategory" in data, str(data))
+        check("ByCategory is a dict", data and isinstance(data.get("ByCategory"), dict), str(data))
+        by_cat = (data or {}).get("ByCategory", {})
+        check("projects in ByCategory", "projects" in by_cat, str(by_cat))
+        check("resources in ByCategory", "resources" in by_cat, str(by_cat))
+        check("archives in ByCategory", "archives" in by_cat, str(by_cat))
+        total_from_cats = sum(by_cat.values())
+        check("ByCategory sums to TotalNotes",
+              total_from_cats == data.get("TotalNotes", -1),
+              f"sum={total_from_cats} total={data.get('TotalNotes')}")
 
     section("note_delete")
     resp = c.call("note_create", {"path": "projects/soft-del.md", "body": "bye"})
@@ -424,6 +589,10 @@ def run_tests(c: MCPClient):
     resp = c.call("note_get", {"scope": "personal", "path": "projects/soft-del.md"})
     check_err("soft-deleted note not accessible", resp, "not_found")
 
+    # Delete a non-existent note → not_found
+    resp = c.call("note_delete", {"scope": "personal", "path": "projects/nonexistent-del.md", "soft": True})
+    check_err("delete non-existent → not_found", resp, "not_found")
+
     c.call("note_create", {"path": "projects/hard-del.md", "body": "gone"})
     resp = c.call("note_delete", {"scope": "personal", "path": "projects/hard-del.md", "soft": False})
     check_ok("hard delete", resp)
@@ -432,92 +601,169 @@ def run_tests(c: MCPClient):
     check_err("hard-deleted note not accessible", resp, "not_found")
 
 
-def run_phase2_tests(c: MCPClient):
+def run_phase2_tests(c: MCPClient, vault_dir: str):
 
     section("vault_health")
     resp = c.call("vault_health", {})
     is_err, text = check_ok("vault_health succeeds", resp)
     if not is_err:
         data = parse_json(text)
-        check("UnrecognizedFiles present", data is not None and "UnrecognizedFiles" in data, str(data))
-        check("WatcherStatus present", data is not None and "WatcherStatus" in data, str(data))
+        check("UnrecognizedFiles key present", data is not None and "UnrecognizedFiles" in data, str(data))
+        check("WatcherStatus key present", data is not None and "WatcherStatus" in data, str(data))
+        check("CaseCollisions key present", data is not None and "CaseCollisions" in data, str(data))
+        check("SyncConflicts key present", data is not None and "SyncConflicts" in data, str(data))
+        check("CaseCollisions is list or null",
+              data is None or isinstance(data.get("CaseCollisions"), (list, type(None))), str(data))
+
+    # Place a non-markdown file in the vault and verify UnrecognizedFiles increases
+    unrecog_path = os.path.join(vault_dir, "projects", "unrecognized.txt")
+    os.makedirs(os.path.dirname(unrecog_path), exist_ok=True)
+    with open(unrecog_path, "w") as f:
+        f.write("not a markdown note")
+    resp = c.call("vault_health", {})
+    is_err, text = check_ok("vault_health after adding unrecognized file", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("UnrecognizedFiles > 0 after adding .txt file",
+              data is not None and data.get("UnrecognizedFiles", 0) > 0, str(data))
 
     section("vault_rescan")
+    # Write a note directly to disk without going through the MCP server
+    ext_dir = os.path.join(vault_dir, "resources")
+    os.makedirs(ext_dir, exist_ok=True)
+    ext_note = os.path.join(ext_dir, "external.md")
+    with open(ext_note, "w") as f:
+        f.write("---\ntitle: External Note\n---\nWritten directly to disk.\n")
+
     resp = c.call("vault_rescan", {})
     is_err, text = check_ok("vault_rescan succeeds", resp)
     if not is_err:
         check("returns rescan complete", "rescan" in text.lower(), text)
 
+    # After rescan, the externally-written note should be accessible
+    resp = c.call("note_get", {"scope": "personal", "path": "resources/external.md"})
+    is_err, text = check_ok("externally-written note accessible after rescan", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("external note title round-trips", data and data.get("FrontMatter", {}).get("Title") == "External Note", str(data))
+        # Rescan mints a NoteID for editor-created notes
+        note_id = data.get("FrontMatter", {}).get("Extra", {}).get("derived", {}).get("note_id", "") if data else ""
+        check("NoteID minted for editor-created note after rescan", bool(note_id), str(data))
+
     section("notes_stale")
-    # All notes in the vault were just created — none should be stale with days=1
+    # Write a note with an old updated_at date directly to disk, then rescan
+    stale_dir = os.path.join(vault_dir, "areas")
+    os.makedirs(stale_dir, exist_ok=True)
+    stale_note = os.path.join(stale_dir, "ancient.md")
+    with open(stale_note, "w") as f:
+        f.write("---\ntitle: Ancient Note\nupdated_at: 2020-01-01T00:00:00Z\ncreated_at: 2020-01-01T00:00:00Z\n---\nVery old note.\n")
+    c.call("vault_rescan", {})
+
+    # days=1: ancient note was last updated in 2020, so it IS stale
     resp = c.call("notes_stale", {"days": 1})
-    is_err, text = check_ok("notes_stale with days=1", resp)
+    is_err, text = check_ok("notes_stale with days=1 after adding old note", resp)
     if not is_err:
         data = parse_json(text)
         check("returns Notes key", data is not None and "Notes" in data, str(data))
-        check("no notes stale within 1 day", data and len(data.get("Notes", [])) == 0, str(data))
+        stale_paths = [n.get("Ref", {}).get("Path", "") for n in (data or {}).get("Notes", [])]
+        check("ancient note appears in stale results",
+              any("ancient" in p for p in stale_paths), str(stale_paths))
+
+    # Recently-created notes should not appear in stale results for days=1
+    resp2 = c.call("note_create", {"path": "projects/fresh.md", "body": "Just created"})
+    resp = c.call("notes_stale", {"days": 1})
+    is_err, text = check_ok("fresh note absent from stale results", resp)
+    if not is_err:
+        data = parse_json(text)
+        stale_paths = [n.get("Ref", {}).get("Path", "") for n in (data or {}).get("Notes", [])]
+        check("fresh note NOT in stale results",
+              not any("fresh" in p for p in stale_paths), str(stale_paths))
 
     # notes_stale with days=0 should error
     resp = c.call("notes_stale", {"days": 0})
     check_err("days=0 → error", resp)
 
-    section("notes_backlinks")
-    # Create two notes that link to a target note, one via asset embed
-    c.call("note_create", {"path": "projects/target.md", "title": "Target Note", "body": "I am the target."})
-    c.call("note_create", {
-        "path": "projects/linker-a.md",
-        "body": "See [[target]] for details.",
-    })
-    c.call("note_create", {
-        "path": "resources/linker-b.md",
-        "body": "Reference ![[target]] as an asset.",
-    })
-    c.call("note_create", {
-        "path": "areas/unrelated.md",
-        "body": "No links here.",
-    })
+    # notes_stale categories filter
+    resp = c.call("notes_stale", {"days": 1, "categories": ["projects"]})
+    is_err, text = check_ok("notes_stale categories filter", resp)
+    if not is_err:
+        data = parse_json(text)
+        notes = (data or {}).get("Notes", [])
+        check("category filter: only projects returned",
+              all(n.get("Ref", {}).get("Path", "").startswith("projects/") for n in notes), str(notes))
 
-    # Default (include_assets=false) should only return linker-a
+    section("notes_backlinks")
+    # Create notes: target, regular wikilink, asset embed, full-path wikilink, unrelated
+    c.call("note_create", {"path": "projects/target.md", "title": "Target Note", "body": "I am the target."})
+    c.call("note_create", {"path": "projects/linker-a.md", "body": "See [[target]] for details."})
+    c.call("note_create", {"path": "resources/linker-b.md", "body": "Reference ![[target]] as an asset."})
+    c.call("note_create", {"path": "areas/linker-c.md", "body": "Full path: [[projects/target]]."})
+    c.call("note_create", {"path": "areas/unrelated.md", "body": "No links here."})
+
+    # Default (include_assets=false): linker-a and linker-c (full-path), not linker-b
     resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md"})
     is_err, text = check_ok("backlinks (no assets)", resp)
     if not is_err:
         data = parse_json(text)
         check("returns list", isinstance(data, list), str(data))
         paths = [e.get("Summary", {}).get("Ref", {}).get("Path", "") for e in (data or [])]
-        check("linker-a included", any("linker-a" in p for p in paths), str(paths))
-        check("linker-b excluded (asset)", not any("linker-b" in p for p in paths), str(paths))
+        check("linker-a included (bare [[target]])", any("linker-a" in p for p in paths), str(paths))
+        check("linker-c included (full-path [[projects/target]])", any("linker-c" in p for p in paths), str(paths))
+        check("linker-b excluded (asset ![[target]])", not any("linker-b" in p for p in paths), str(paths))
         check("unrelated excluded", not any("unrelated" in p for p in paths), str(paths))
 
-    # With include_assets=true both linkers should appear; linker-b has IsAsset=true
-    resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md", "include_assets": True})
+    # With include_assets=true: all three linkers appear; linker-b has IsAsset=true
+    resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md",
+                                      "include_assets": True})
     is_err, text = check_ok("backlinks (include_assets=true)", resp)
     if not is_err:
         data = parse_json(text)
-        check("both linkers present", data is not None and len(data) >= 2, str(data))
+        check("all three linkers present", data is not None and len(data) >= 3, str(data))
         asset_entries = [e for e in (data or []) if e.get("IsAsset")]
         non_asset_entries = [e for e in (data or []) if not e.get("IsAsset")]
         check("linker-b has IsAsset=true", len(asset_entries) >= 1, str(data))
-        check("linker-a has IsAsset=false", len(non_asset_entries) >= 1, str(data))
+        check("linker-a/linker-c have IsAsset=false", len(non_asset_entries) >= 2, str(data))
 
-    # Backlinks for a note with no inbound links should return empty array
+    # Empty backlinks
     resp = c.call("notes_backlinks", {"scope": "personal", "path": "areas/unrelated.md"})
     is_err, text = check_ok("backlinks for note with no inbound links", resp)
     if not is_err:
         data = parse_json(text)
         check("empty array", data == [], str(data))
 
+    # Backlinks after move: move linker-a; backlinks for target should reflect new path
+    resp_get = c.call("note_get", {"scope": "personal", "path": "projects/linker-a.md"})
+    _, tg = result_content(resp_get)
+    etag_la = parse_json(tg).get("ETag") if tg else None
+    c.call("note_move", {"scope": "personal", "path": "projects/linker-a.md",
+                         "new_path": "areas/linker-a-moved.md", "if_match": etag_la})
+    resp = c.call("notes_backlinks", {"scope": "personal", "path": "projects/target.md"})
+    is_err, text = check_ok("backlinks after linker moved", resp)
+    if not is_err:
+        data = parse_json(text)
+        paths = [e.get("Summary", {}).get("Ref", {}).get("Path", "") for e in (data or [])]
+        check("moved linker appears at new path", any("linker-a-moved" in p for p in paths), str(paths))
+        check("old path no longer in backlinks", not any("projects/linker-a.md" == p for p in paths), str(paths))
+
     section("notes_related")
     c.call("note_create", {
         "path": "projects/rel-a.md",
         "body": "Project A",
         "tags": ["go", "backend"],
-        "status": "active",
+        "area": "eng",
+        "project": "platform",
     })
     c.call("note_create", {
         "path": "projects/rel-b.md",
         "body": "Project B shares tags",
         "tags": ["go", "backend"],
-        "status": "active",
+        "area": "eng",
+        "project": "platform",
+    })
+    c.call("note_create", {
+        "path": "areas/rel-d.md",
+        "body": "Same area, no tags",
+        "area": "eng",
     })
     c.call("note_create", {
         "path": "resources/rel-c.md",
@@ -525,6 +771,7 @@ def run_phase2_tests(c: MCPClient):
         "tags": ["cooking"],
     })
 
+    # rel-a is most related to rel-b (shared tags + area + project = highest score)
     resp = c.call("notes_related", {"scope": "personal", "path": "projects/rel-a.md"})
     is_err, text = check_ok("notes_related for rel-a", resp)
     if not is_err:
@@ -533,48 +780,100 @@ def run_phase2_tests(c: MCPClient):
         if data:
             check("top result has Score > 0", data[0].get("Score", 0) > 0, str(data[0]))
             top_path = data[0].get("Summary", {}).get("Ref", {}).get("Path", "")
-            check("top result is rel-b (most overlap)", "rel-b" in top_path, str(data))
+            check("top result is rel-b (shared tags+area+project)", "rel-b" in top_path, str(data))
 
-    # Related for note with no shared attributes should return empty or low-scored
+    # Area-only overlap (rel-d shares area=eng with rel-a)
+    resp = c.call("notes_related", {"scope": "personal", "path": "areas/rel-d.md"})
+    is_err, text = check_ok("notes_related by area overlap", resp)
+    if not is_err:
+        data = parse_json(text)
+        paths = [r.get("Summary", {}).get("Ref", {}).get("Path", "") for r in (data or [])]
+        check("area-related notes appear", any("rel-a" in p or "rel-b" in p for p in paths), str(paths))
+
+    # Limit parameter
+    resp = c.call("notes_related", {"scope": "personal", "path": "projects/rel-a.md", "limit": 1})
+    is_err, text = check_ok("notes_related with limit=1", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("limit=1 returns at most 1 result", data is not None and len(data) <= 1, str(data))
+
+    # Unrelated note
     resp = c.call("notes_related", {"scope": "personal", "path": "resources/rel-c.md"})
-    is_err, text = check_ok("notes_related with no overlap", resp)
+    is_err, text = check_ok("notes_related with no overlap returns list", resp)
     if not is_err:
         data = parse_json(text)
         check("returns list", isinstance(data, list), str(data))
 
     section("notes_create_batch")
+    # Mixed success/failure with path traversal
     resp = c.call("notes_create_batch", {
         "notes": [
-            {"path": "projects/batch-a.md", "body": "Batch note A", "status": "active"},
-            {"path": "projects/batch-b.md", "body": "Batch note B"},
-            {"path": "../escape/bad.md", "body": "should fail"},  # path traversal
+            {"path": "projects/batch-a.md", "body": "Batch note A", "status": "active",
+             "area": "batcharea", "project": "batchproj"},
+            {"path": "projects/batch-b.md", "body": "Batch note B",
+             "area": "batcharea", "project": "batchproj"},
+            {"path": "../escape/bad.md", "body": "should fail"},
         ]
     })
-    is_err, text = check_ok("notes_create_batch with mixed success/failure", resp)
+    is_err, text = check_ok("notes_create_batch mixed success/failure", resp)
     if not is_err:
         data = parse_json(text)
         check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
         check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
         results = data.get("Results", []) if data else []
         check("3 results returned", len(results) == 3, str(results))
-        ok_results = [r for r in results if r.get("OK")]
+        check("result[0] index==0", results[0].get("Index") == 0 if results else False, str(results))
+        check("result[2] index==2", results[2].get("Index") == 2 if len(results) > 2 else False, str(results))
         fail_results = [r for r in results if not r.get("OK")]
-        check("2 OK results", len(ok_results) == 2, str(results))
-        check("1 failed result has Error", len(fail_results) == 1 and fail_results[0].get("Error"), str(fail_results))
+        check("failed result has Error", len(fail_results) == 1 and bool(fail_results[0].get("Error")), str(fail_results))
+
+    # Empty batch succeeds with zero counts
+    resp = c.call("notes_create_batch", {"notes": []})
+    is_err, text = check_ok("notes_create_batch empty array succeeds", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("SuccessCount == 0", data and data.get("SuccessCount") == 0, str(data))
+        check("FailureCount == 0", data and data.get("FailureCount") == 0, str(data))
 
     section("notes_update_batch")
+    # Get ETags for ETag-protection test
+    r_a = c.call("note_get", {"scope": "personal", "path": "projects/batch-a.md"})
+    r_b = c.call("note_get", {"scope": "personal", "path": "projects/batch-b.md"})
+    _, ta = result_content(r_a)
+    _, tb = result_content(r_b)
+    etag_ba = parse_json(ta).get("ETag") if ta else None
+    etag_bb = parse_json(tb).get("ETag") if tb else None
+
     resp = c.call("notes_update_batch", {
         "notes": [
-            {"path": "projects/batch-a.md", "body": "Updated body A"},
+            {"path": "projects/batch-a.md", "body": "Updated body A", "if_match": etag_ba},
             {"path": "projects/batch-b.md", "body": "Updated body B"},
             {"path": "projects/nonexistent.md", "body": "should fail"},
         ]
     })
-    is_err, text = check_ok("notes_update_batch with mixed success/failure", resp)
+    is_err, text = check_ok("notes_update_batch mixed success/failure", resp)
     if not is_err:
         data = parse_json(text)
         check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
         check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
+
+    # ETag conflict in batch: use stale etag for batch-b (already updated above without etag_bb)
+    resp = c.call("notes_update_batch", {
+        "notes": [
+            {"path": "projects/batch-a.md", "body": "Fresh A"},
+            {"path": "projects/batch-b.md", "body": "Should fail", "if_match": etag_bb},
+        ]
+    })
+    is_err, text = check_ok("notes_update_batch with one stale ETag", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("SuccessCount == 1 (fresh-A ok)", data and data.get("SuccessCount") == 1, str(data))
+        check("FailureCount == 1 (stale-B fails)", data and data.get("FailureCount") == 1, str(data))
+        results = data.get("Results", []) if data else []
+        b_result = next((r for r in results if "batch-b" in r.get("Path", "")), None)
+        check("batch-b failure contains 'conflict'",
+              b_result is not None and "conflict" in b_result.get("Error", "").lower(),
+              str(b_result))
 
     section("notes_patch_frontmatter_batch")
     resp = c.call("notes_patch_frontmatter_batch", {
@@ -584,39 +883,57 @@ def run_phase2_tests(c: MCPClient):
             {"path": "projects/nonexistent.md", "fields": {"status": "done"}},
         ]
     })
-    is_err, text = check_ok("notes_patch_frontmatter_batch with mixed success/failure", resp)
+    is_err, text = check_ok("notes_patch_frontmatter_batch mixed success/failure", resp)
     if not is_err:
         data = parse_json(text)
         check("SuccessCount == 2", data and data.get("SuccessCount") == 2, str(data))
         check("FailureCount == 1", data and data.get("FailureCount") == 1, str(data))
-        # verify status was actually updated
+
+    # Verify patch actually applied
     resp = c.call("note_get", {"scope": "personal", "path": "projects/batch-a.md"})
     is_err, text = check_ok("get batch-a after patch", resp)
     if not is_err:
         data = parse_json(text)
-        check("status=done applied", data and data.get("FrontMatter", {}).get("Status") == "done", str(data))
+        check("status=done applied to batch-a",
+              data and data.get("FrontMatter", {}).get("Status") == "done", str(data))
+        # area/project from create still preserved
+        check("area preserved through patch",
+              data and data.get("FrontMatter", {}).get("Area") == "batcharea", str(data))
 
     section("category_templates")
-    # Projects notes created without explicit status should get status=active from default template
+    # projects → status=active applied by default template
     resp = c.call("note_create", {"path": "projects/templated.md", "title": "Templated Project"})
     is_err, text = check_ok("create note in projects/ (template applies)", resp)
     if not is_err:
         data = parse_json(text)
         check("status=active from template", data and data.get("Status") == "active", str(data))
 
-    # Archives notes should get status=archived from default template
+    # archives → status=archived applied by default template
     resp = c.call("note_create", {"path": "archives/templated-archive.md", "title": "Archived"})
     is_err, text = check_ok("create note in archives/ (template applies)", resp)
     if not is_err:
         data = parse_json(text)
         check("status=archived from template", data and data.get("Status") == "archived", str(data))
 
-    # Explicit status should override the template
+    # areas/resources → no default status (empty)
+    resp = c.call("note_create", {"path": "areas/no-template.md", "title": "Area Note"})
+    is_err, text = check_ok("create note in areas/ (no status template)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("areas note has no default status", data and data.get("Status") == "", str(data))
+
+    resp = c.call("note_create", {"path": "resources/no-template.md", "title": "Resource Note"})
+    is_err, text = check_ok("create note in resources/ (no status template)", resp)
+    if not is_err:
+        data = parse_json(text)
+        check("resources note has no default status", data and data.get("Status") == "", str(data))
+
+    # Explicit status overrides template
     resp = c.call("note_create", {"path": "projects/explicit-status.md", "status": "paused"})
     is_err, text = check_ok("explicit status overrides template", resp)
     if not is_err:
         data = parse_json(text)
-        check("status=paused (explicit wins)", data and data.get("Status") == "paused", str(data))
+        check("status=paused (explicit wins over template)", data and data.get("Status") == "paused", str(data))
 
 
 def main():
@@ -654,7 +971,7 @@ def main():
             print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}")
 
             run_tests(c)
-            run_phase2_tests(c)
+            run_phase2_tests(c, vault)
 
         finally:
             c.close()

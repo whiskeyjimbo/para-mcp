@@ -273,10 +273,16 @@ func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
 				return err
 			}
 			if err := os.Rename(absPath, trashPath); err != nil {
+				if os.IsNotExist(err) {
+					return domain.ErrNotFound
+				}
 				return err
 			}
 		} else {
 			if err := os.Remove(absPath); err != nil {
+				if os.IsNotExist(err) {
+					return domain.ErrNotFound
+				}
 				return err
 			}
 		}
