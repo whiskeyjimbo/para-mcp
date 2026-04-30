@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
 const defaultRescanInterval = 60 * time.Second
@@ -37,8 +36,17 @@ func isConflictFile(name string) bool {
 	return false
 }
 
+// VaultIndexer is the narrow interface the watcher needs from LocalVault.
+type VaultIndexer interface {
+	Root() string
+	CaseSensitive() bool
+	IndexFile(absPath string)
+	RemoveFile(absPath string)
+	RescanVault() error
+}
+
 type watcher struct {
-	vault         *LocalVault
+	v             VaultIndexer
 	fw            *fsnotify.Watcher
 	ticker        *time.Ticker
 	done          chan struct{}
@@ -51,9 +59,9 @@ type watcher struct {
 	pending   map[string]time.Time
 }
 
-func newWatcher(v *LocalVault) *watcher {
+func newWatcher(v VaultIndexer) *watcher {
 	w := &watcher{
-		vault:   v,
+		v:       v,
 		done:    make(chan struct{}),
 		pending: make(map[string]time.Time),
 	}
@@ -70,7 +78,7 @@ func (w *watcher) start() {
 		return
 	}
 
-	if err := w.addDirs(fw, w.vault.root); err != nil {
+	if err := w.addDirs(fw, w.v.Root()); err != nil {
 		slog.Warn("fsnotify watch failed, falling back to rescan-only", "err", err)
 		fw.Close()
 		w.watcherStatus.Store("limit_exceeded")
@@ -124,7 +132,7 @@ func (w *watcher) loop() {
 			if w.rescanActive.CompareAndSwap(false, true) {
 				go func() {
 					defer w.rescanActive.Store(false)
-					w.vault.scanVault() //nolint:errcheck
+					w.v.RescanVault() //nolint:errcheck
 				}()
 			}
 		case event, ok := <-w.fw.Events:
@@ -148,7 +156,7 @@ func (w *watcher) rescanLoop() {
 		case <-w.done:
 			return
 		case <-w.ticker.C:
-			w.vault.scanVault() //nolint:errcheck
+			w.v.RescanVault() //nolint:errcheck
 		}
 	}
 }
@@ -222,70 +230,17 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 	}
 }
 
-func (w *watcher) absToNP(absPath string) (domain.NormalizedPath, bool) {
-	if !isMDFile(absPath) {
-		return domain.NormalizedPath{}, false
-	}
-	rel, err := filepath.Rel(w.vault.root, absPath)
-	if err != nil {
-		return domain.NormalizedPath{}, false
-	}
-	np, err := domain.Normalize(w.vault.root, filepath.ToSlash(rel), w.vault.caps.CaseSensitive)
-	if err != nil {
-		return domain.NormalizedPath{}, false
-	}
-	return np, true
-}
-
 func (w *watcher) reindexFile(absPath string) {
-	np, ok := w.absToNP(absPath)
-	if !ok {
-		return
-	}
-	w.vault.indexNote(absPath, np)
+	w.v.IndexFile(absPath)
 }
 
 func (w *watcher) removeFromIndex(absPath string) {
-	np, ok := w.absToNP(absPath)
-	if !ok {
-		return
-	}
-	w.vault.removeNoteFromAllIndexes(np.IndexKey, np.Storage)
+	w.v.RemoveFile(absPath)
 }
 
 func (w *watcher) handleRename(oldAbs, newAbs string) {
-	if !isMDFile(newAbs) {
-		w.removeFromIndex(oldAbs)
-		return
-	}
-	oldNP, ok := w.absToNP(oldAbs)
-	if !ok {
-		w.reindexFile(newAbs)
-		return
-	}
-	newNP, ok := w.absToNP(newAbs)
-	if !ok {
-		w.removeFromIndex(oldAbs)
-		return
-	}
-
-	note, err := w.vault.readNote(newNP.Storage)
-	if err != nil {
-		return
-	}
-	note.Ref.Path = newNP.Storage
-	s := w.vault.noteToSummary(note)
-	links := parseLinks(note.Body)
-
-	w.vault.mu.Lock()
-	delete(w.vault.notes, oldNP.IndexKey)
-	w.vault.removeLinkIndexLocked(oldNP.Storage)
-	w.vault.notes[newNP.IndexKey] = s
-	w.vault.addLinkIndexLocked(newNP.Storage, links)
-	w.vault.mu.Unlock()
-
-	w.vault.idx.Remove(domain.NoteRef{Scope: w.vault.scope, Path: oldNP.Storage})
-	w.vault.idx.Add(summaryToDoc(s, note.Body))
+	w.v.RemoveFile(oldAbs)
+	w.v.IndexFile(newAbs)
 }
 
 func isSameBase(old, new string) bool {

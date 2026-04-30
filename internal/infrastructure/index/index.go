@@ -32,11 +32,28 @@ const (
 	StemmerNone   StemmerKind = "none"
 )
 
-// Config holds per-vault index configuration.
-type Config struct {
-	Stemmer    StemmerKind
-	TitleBoost float64
-	StopWords  []string
+// Option configures an Index.
+type Option func(*config)
+
+type config struct {
+	stemmer    StemmerKind
+	titleBoost float64
+	stopWords  []string
+}
+
+// WithStemmer sets the stemming algorithm (default: Porter).
+func WithStemmer(k StemmerKind) Option {
+	return func(c *config) { c.stemmer = k }
+}
+
+// WithTitleBoost sets the BM25 title field multiplier (default: 2.0).
+func WithTitleBoost(v float64) Option {
+	return func(c *config) { c.titleBoost = v }
+}
+
+// WithStopWords adds extra stop words on top of the built-in set.
+func WithStopWords(words []string) Option {
+	return func(c *config) { c.stopWords = words }
 }
 
 // Doc is the document representation fed into the index.
@@ -81,22 +98,20 @@ type writeOp struct {
 
 // Index is a BM25 full-text index.
 type Index struct {
-	cfg       Config
+	cfg       config
 	ch        chan writeOp
 	snap      atomic.Pointer[snapshot]
 	stopWords map[string]bool
 	done      chan struct{}
 }
 
-// New creates and starts a new Index with the given configuration.
-func New(cfg Config) *Index {
-	if cfg.TitleBoost == 0 {
-		cfg.TitleBoost = defaultTitleBoost
+// New creates and starts a new Index with the given options.
+func New(opts ...Option) *Index {
+	cfg := config{stemmer: StemmerPorter, titleBoost: defaultTitleBoost}
+	for _, o := range opts {
+		o(&cfg)
 	}
-	if cfg.Stemmer == "" {
-		cfg.Stemmer = StemmerPorter
-	}
-	sw := buildStopWords(cfg.StopWords)
+	sw := buildStopWords(cfg.stopWords)
 	idx := &Index{
 		cfg:       cfg,
 		ch:        make(chan writeOp, 512),
@@ -165,7 +180,7 @@ func (idx *Index) Search(query string, limit int) []Result {
 			if snap.avgTitle > 0 && p.titleTF > 0 {
 				norm := 1 - bm25B + bm25B*float64(meta.titleLen)/snap.avgTitle
 				tf := float64(p.titleTF)
-				titleScore = idf * (tf * (bm25K1 + 1)) / (tf + bm25K1*norm) * idx.cfg.TitleBoost
+				titleScore = idf * (tf * (bm25K1 + 1)) / (tf + bm25K1*norm) * idx.cfg.titleBoost
 			}
 
 			scores[docKey] += bodyScore + titleScore
@@ -312,7 +327,7 @@ func (idx *Index) tokenize(text string) []string {
 		if idx.stopWords[f] {
 			continue
 		}
-		if idx.cfg.Stemmer == StemmerPorter {
+		if idx.cfg.stemmer == StemmerPorter {
 			f = english.Stem(f, false)
 		}
 		if f != "" {

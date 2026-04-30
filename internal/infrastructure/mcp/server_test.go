@@ -8,7 +8,6 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/application"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
 
@@ -41,7 +40,7 @@ func (r *scopeRecorder) Search(_ context.Context, _ string, f domain.Filter, _ i
 
 func newTestService(t *testing.T) *application.NoteService {
 	t.Helper()
-	v, err := localvault.New("personal", t.TempDir(), index.Config{})
+	v, err := localvault.New("personal", t.TempDir())
 	if err != nil {
 		t.Fatalf("localvault.New: %v", err)
 	}
@@ -66,9 +65,9 @@ func TestPersonalOnly(t *testing.T) {
 	}
 }
 
-func TestBuildNilScopesFnInstallsPersonalOnly(t *testing.T) {
+func TestBuildDefaultScopesFnInstallsPersonalOnly(t *testing.T) {
 	svc := newTestService(t)
-	s := Build(svc, nil)
+	s := Build(svc)
 	if s == nil {
 		t.Fatal("Build returned nil")
 	}

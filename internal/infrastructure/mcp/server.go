@@ -10,29 +10,78 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/application"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
 
+// NotePort is the application interface consumed by MCP tool handlers.
+type NotePort interface {
+	Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error)
+	Create(ctx context.Context, in domain.CreateInput) (domain.NoteSummary, error)
+	UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.NoteSummary, error)
+	PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.NoteSummary, error)
+	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.NoteSummary, error)
+	Delete(ctx context.Context, ref domain.NoteRef, soft bool) error
+	Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error)
+	Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error)
+	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error)
+	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.Filter) ([]domain.RankedNote, error)
+	Stats(ctx context.Context) (domain.VaultStats, error)
+	Health(ctx context.Context) (domain.VaultHealth, error)
+	Rescan(ctx context.Context) error
+	CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error)
+	UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error)
+	PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error)
+}
+
 // ScopesFunc resolves the permitted scopes for a request.
 type ScopesFunc func(ctx context.Context) []domain.ScopeID
+
+// Option configures a Build call.
+type Option func(*buildConfig)
+
+type buildConfig struct {
+	scopesFn      ScopesFunc
+	serverName    string
+	serverVersion string
+}
+
+// WithScopesFunc sets the scope resolver (default: personal only).
+func WithScopesFunc(fn ScopesFunc) Option {
+	return func(c *buildConfig) { c.scopesFn = fn }
+}
+
+// WithServerName overrides the MCP server name (default: "paras").
+func WithServerName(name string) Option {
+	return func(c *buildConfig) { c.serverName = name }
+}
+
+// WithServerVersion overrides the MCP server version (default: "0.1.0").
+func WithServerVersion(v string) Option {
+	return func(c *buildConfig) { c.serverVersion = v }
+}
 
 func personalOnly(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 }
 
 // Build constructs and returns an MCPServer wired to svc.
-func Build(svc *application.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServer {
-	if scopesFn == nil {
-		scopesFn = personalOnly
+func Build(svc NotePort, opts ...Option) *mcpserver.MCPServer {
+	cfg := buildConfig{
+		scopesFn:      personalOnly,
+		serverName:    "paras",
+		serverVersion: "0.1.0",
 	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	s := mcpserver.NewMCPServer(
-		"paras",
-		"0.1.0",
+		cfg.serverName,
+		cfg.serverVersion,
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: scopesFn}
+	h := &handlers{svc: svc, scopes: cfg.scopesFn}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -58,7 +107,7 @@ func Build(svc *application.NoteService, scopesFn ScopesFunc) *mcpserver.MCPServ
 }
 
 type handlers struct {
-	svc    *application.NoteService
+	svc    NotePort
 	scopes ScopesFunc
 }
 

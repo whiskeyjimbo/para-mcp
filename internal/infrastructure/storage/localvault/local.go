@@ -34,7 +34,7 @@ type LocalVault struct {
 }
 
 // New creates a LocalVault rooted at root with the given scope.
-func New(scope, root string, idxCfg index.Config) (*LocalVault, error) {
+func New(scope, root string) (*LocalVault, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create vault root: %w", err)
 	}
@@ -43,7 +43,7 @@ func New(scope, root string, idxCfg index.Config) (*LocalVault, error) {
 		scope:     scope,
 		root:      root,
 		actors:    actor.New(),
-		idx:       index.New(idxCfg),
+		idx:       index.New(),
 		notes:     make(map[string]domain.NoteSummary),
 		outLinks:  make(map[string][]outLink),
 		backlinks: make(map[string][]backlinkSrc),
@@ -71,6 +71,43 @@ func (v *LocalVault) Close() {
 
 func (v *LocalVault) Scope() domain.ScopeID             { return v.scope }
 func (v *LocalVault) Capabilities() domain.Capabilities { return v.caps }
+func (v *LocalVault) Root() string                      { return v.root }
+func (v *LocalVault) CaseSensitive() bool               { return v.caps.CaseSensitive }
+
+// IndexFile parses and indexes the note at absPath. No-op for non-markdown files.
+func (v *LocalVault) IndexFile(absPath string) {
+	if !isMDFile(absPath) {
+		return
+	}
+	rel, err := filepath.Rel(v.root, absPath)
+	if err != nil {
+		return
+	}
+	np, err := domain.Normalize(v.root, filepath.ToSlash(rel), v.caps.CaseSensitive)
+	if err != nil {
+		return
+	}
+	v.indexNote(absPath, np)
+}
+
+// RescanVault re-walks the vault root and rebuilds all indexes.
+func (v *LocalVault) RescanVault() error { return v.scanVault() }
+
+// RemoveFile removes the note at absPath from all indexes. No-op for non-markdown files.
+func (v *LocalVault) RemoveFile(absPath string) {
+	if !isMDFile(absPath) {
+		return
+	}
+	rel, err := filepath.Rel(v.root, absPath)
+	if err != nil {
+		return
+	}
+	np, err := domain.Normalize(v.root, filepath.ToSlash(rel), v.caps.CaseSensitive)
+	if err != nil {
+		return
+	}
+	v.removeNoteFromAllIndexes(np.IndexKey, np.Storage)
+}
 
 func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
 	np, err := v.normalizePath(path)
@@ -429,64 +466,46 @@ func (v *LocalVault) countUnrecognized() int {
 }
 
 func (v *LocalVault) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
-	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(inputs))}
-	for i, in := range inputs {
-		item := domain.BatchItemResult{Index: i, Path: in.Path}
+	return runBatch(inputs, func(in domain.CreateInput) (string, domain.NoteSummary, error) {
 		np, err := v.normalizePath(in.Path)
 		if err != nil {
-			item.Error = err.Error()
-			res.FailureCount++
-			res.Results[i] = item
-			continue
+			return in.Path, domain.NoteSummary{}, err
 		}
 		sum, err := v.Create(ctx, domain.CreateInput{Path: np.Storage, FrontMatter: in.FrontMatter, Body: in.Body})
-		if err != nil {
-			item.Error = err.Error()
-			res.FailureCount++
-		} else {
-			item.OK = true
-			item.Summary = &sum
-			res.SuccessCount++
-		}
-		res.Results[i] = item
-	}
-	return res, nil
+		return in.Path, sum, err
+	}), nil
 }
 
 func (v *LocalVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
-	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
-	for i, it := range items {
-		item := domain.BatchItemResult{Index: i, Path: it.Path}
+	return runBatch(items, func(it domain.BatchUpdateBodyInput) (string, domain.NoteSummary, error) {
 		sum, err := v.UpdateBody(ctx, it.Path, it.Body, it.IfMatch)
-		if err != nil {
-			item.Error = err.Error()
-			res.FailureCount++
-		} else {
-			item.OK = true
-			item.Summary = &sum
-			res.SuccessCount++
-		}
-		res.Results[i] = item
-	}
-	return res, nil
+		return it.Path, sum, err
+	}), nil
 }
 
 func (v *LocalVault) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
-	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
-	for i, it := range items {
-		item := domain.BatchItemResult{Index: i, Path: it.Path}
+	return runBatch(items, func(it domain.BatchPatchFrontMatterInput) (string, domain.NoteSummary, error) {
 		sum, err := v.PatchFrontMatter(ctx, it.Path, it.Fields, it.IfMatch)
+		return it.Path, sum, err
+	}), nil
+}
+
+func runBatch[I any](items []I, fn func(I) (path string, sum domain.NoteSummary, err error)) domain.BatchResult {
+	res := domain.BatchResult{Results: make([]domain.BatchItemResult, len(items))}
+	for i, item := range items {
+		path, sum, err := fn(item)
+		r := domain.BatchItemResult{Index: i, Path: path}
 		if err != nil {
-			item.Error = err.Error()
+			r.Error = err.Error()
 			res.FailureCount++
 		} else {
-			item.OK = true
-			item.Summary = &sum
+			r.OK = true
+			r.Summary = &sum
 			res.SuccessCount++
 		}
-		res.Results[i] = item
+		res.Results[i] = r
 	}
-	return res, nil
+	return res
 }
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {

@@ -29,7 +29,7 @@ func flush(t *testing.T, idx *Index) {
 }
 
 func TestIndex_BasicSearch(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	addAndFlush(t, idx, Doc{
@@ -48,7 +48,7 @@ func TestIndex_BasicSearch(t *testing.T) {
 }
 
 func TestIndex_PorterStemming(t *testing.T) {
-	idx := New(Config{Stemmer: StemmerPorter})
+	idx := New(WithStemmer(StemmerPorter))
 	defer idx.Close()
 
 	addAndFlush(t, idx, Doc{
@@ -63,7 +63,7 @@ func TestIndex_PorterStemming(t *testing.T) {
 }
 
 func TestIndex_NoStemming(t *testing.T) {
-	idx := New(Config{Stemmer: StemmerNone})
+	idx := New(WithStemmer(StemmerNone))
 	defer idx.Close()
 
 	addAndFlush(t, idx, Doc{
@@ -78,7 +78,7 @@ func TestIndex_NoStemming(t *testing.T) {
 }
 
 func TestIndex_TitleBoost(t *testing.T) {
-	idx := New(Config{TitleBoost: 2.0})
+	idx := New(WithTitleBoost(2.0))
 	defer idx.Close()
 
 	addAndFlush(t, idx,
@@ -104,7 +104,7 @@ func TestIndex_TitleBoost(t *testing.T) {
 }
 
 func TestIndex_Remove(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	r := ref("personal", "projects/temp.md")
@@ -123,7 +123,7 @@ func TestIndex_Remove(t *testing.T) {
 }
 
 func TestIndex_Update(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	r := ref("personal", "projects/evolving.md")
@@ -144,7 +144,7 @@ func TestIndex_Update(t *testing.T) {
 }
 
 func TestIndex_StopWordsNotIndexed(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	addAndFlush(t, idx, Doc{
@@ -158,7 +158,7 @@ func TestIndex_StopWordsNotIndexed(t *testing.T) {
 }
 
 func TestIndex_Ranking(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	addAndFlush(t, idx,
@@ -176,7 +176,7 @@ func TestIndex_Ranking(t *testing.T) {
 }
 
 func TestIndex_UpdatedAt(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	ts := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
@@ -196,7 +196,7 @@ func TestIndex_UpdatedAt(t *testing.T) {
 }
 
 func TestIndex_EmptySearch(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 	if results := idx.Search("", 10); results != nil {
 		t.Fatal("empty query should return nil")
@@ -204,7 +204,7 @@ func TestIndex_EmptySearch(t *testing.T) {
 }
 
 func TestIndex_ConcurrentReads(t *testing.T) {
-	idx := New(Config{})
+	idx := New()
 	defer idx.Close()
 
 	addAndFlush(t, idx, Doc{Ref: ref("personal", "projects/x.md"), Body: "concurrent access test"})

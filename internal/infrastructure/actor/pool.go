@@ -23,14 +23,27 @@ type op struct {
 // operations sequentially, so concurrent callers writing the same note are
 // automatically serialized without file-level OS locks.
 type Pool struct {
-	mu     sync.RWMutex
-	actors map[key]chan op
-	closed bool
-	wg     sync.WaitGroup
+	mu         sync.RWMutex
+	actors     map[key]chan op
+	closed     bool
+	wg         sync.WaitGroup
+	bufferSize int
 }
 
-func New() *Pool {
-	return &Pool{actors: make(map[key]chan op)}
+// Option configures a Pool.
+type Option func(*Pool)
+
+// WithBufferSize sets the per-actor channel buffer size (default 64).
+func WithBufferSize(n int) Option {
+	return func(p *Pool) { p.bufferSize = n }
+}
+
+func New(opts ...Option) *Pool {
+	p := &Pool{actors: make(map[key]chan op), bufferSize: 64}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 // Do sends fn to the actor for (scope, path) and waits for it to complete.
@@ -105,7 +118,7 @@ func (p *Pool) create(k key) chan op {
 	if ch, ok := p.actors[k]; ok {
 		return ch
 	}
-	ch := make(chan op, 64)
+	ch := make(chan op, p.bufferSize)
 	p.actors[k] = ch
 	p.wg.Go(func() {
 		for o := range ch {

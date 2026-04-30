@@ -11,7 +11,6 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 	mcplayer "github.com/whiskeyjimbo/paras/internal/infrastructure/mcp"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
@@ -26,7 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	v, err := localvault.New("personal", *vaultRoot, index.Config{})
+	v, err := localvault.New("personal", *vaultRoot)
 	if err != nil {
 		slog.Error("failed to open vault", "err", err)
 		os.Exit(1)
@@ -34,7 +33,7 @@ func main() {
 	defer v.Close()
 
 	svc := application.NewService(v)
-	s := mcplayer.Build(svc, nil)
+	s := mcplayer.Build(svc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

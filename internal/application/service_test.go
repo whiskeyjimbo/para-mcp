@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
 
 func newTestService(t *testing.T) *NoteService {
 	t.Helper()
-	v, err := localvault.New("personal", t.TempDir(), index.Config{})
+	v, err := localvault.New("personal", t.TempDir())
 	if err != nil {
 		t.Fatalf("localvault.New: %v", err)
 	}

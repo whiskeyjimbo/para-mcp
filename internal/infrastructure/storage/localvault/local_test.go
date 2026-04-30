@@ -7,12 +7,11 @@ import (
 
 	"github.com/whiskeyjimbo/paras/internal/application"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
 )
 
 func newTestVault(t *testing.T) *LocalVault {
 	t.Helper()
-	v, err := New("personal", t.TempDir(), index.Config{})
+	v, err := New("personal", t.TempDir())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
