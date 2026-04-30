@@ -24,6 +24,7 @@ type Option func(*vaultConfig)
 type vaultConfig struct {
 	indexOpts        []index.Option
 	ftsIndex         ports.FTSIndex
+	executor         actor.Executor
 	clock            func() time.Time
 	conflictPatterns []*regexp.Regexp
 	actorOpts        []actor.Option
@@ -53,9 +54,15 @@ func WithConflictPatterns(patterns []*regexp.Regexp) Option {
 	return func(c *vaultConfig) { c.conflictPatterns = patterns }
 }
 
-// WithActorOptions passes options through to the actor pool (e.g. WithBufferSize).
+// WithActorOptions passes options through to the default actor pool (e.g. WithBufferSize).
+// Ignored if WithActorExecutor is also provided.
 func WithActorOptions(opts ...actor.Option) Option {
 	return func(c *vaultConfig) { c.actorOpts = append(c.actorOpts, opts...) }
+}
+
+// WithActorExecutor replaces the default actor pool with a custom Executor.
+func WithActorExecutor(e actor.Executor) Option {
+	return func(c *vaultConfig) { c.executor = e }
 }
 
 // WithRescanInterval sets how often the watcher triggers a full vault rescan
@@ -77,7 +84,7 @@ type LocalVault struct {
 	caps  domain.Capabilities
 	clock func() time.Time
 
-	actors *actor.Pool
+	actors actor.Executor
 	idx    ports.FTSIndex
 	w      *watcher
 
@@ -104,11 +111,15 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if fts == nil {
 		fts = index.New(cfg.indexOpts...)
 	}
+	exec := cfg.executor
+	if exec == nil {
+		exec = actor.New(cfg.actorOpts...)
+	}
 	v := &LocalVault{
 		scope:  scope,
 		root:   root,
 		clock:  cfg.clock,
-		actors: actor.New(cfg.actorOpts...),
+		actors: exec,
 		idx:    fts,
 		cache:  newNoteCache(),
 		graph:  newBacklinkGraph(),

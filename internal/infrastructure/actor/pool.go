@@ -8,6 +8,14 @@ import (
 	"sync"
 )
 
+// Executor serializes operations by (scope, path) pair so concurrent
+// callers writing the same note are automatically ordered without OS locks.
+// Implementations must also support shutdown via Close.
+type Executor interface {
+	Do(ctx context.Context, scope, path string, fn func() error) error
+	Close()
+}
+
 type key struct {
 	scope string
 	path  string
