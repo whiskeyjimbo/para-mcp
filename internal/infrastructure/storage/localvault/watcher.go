@@ -14,7 +14,7 @@ import (
 )
 
 const defaultRescanInterval = 60 * time.Second
-const renamePairWindow = 50 * time.Millisecond
+const defaultRenamePairWindow = 50 * time.Millisecond
 
 // DefaultConflictPatterns is the default set of filename patterns treated as
 // sync-conflict or OS-metadata files that should be ignored by the watcher.
@@ -47,17 +47,21 @@ type watcher struct {
 	watcherStatus    atomic.Value
 	rescanActive     atomic.Bool
 	conflictPatterns []*regexp.Regexp
+	rescanInterval   time.Duration
+	renamePairWindow time.Duration
 
 	renames *renamePairTracker
 }
 
-func newWatcher(v VaultIndexer, root string, conflictPatterns []*regexp.Regexp) *watcher {
+func newWatcher(v VaultIndexer, root string, conflictPatterns []*regexp.Regexp, rescanInterval, renamePairWin time.Duration) *watcher {
 	w := &watcher{
 		v:                v,
 		root:             root,
 		done:             make(chan struct{}),
-		renames:          newRenamePairTracker(renamePairWindow),
+		renames:          newRenamePairTracker(renamePairWin),
 		conflictPatterns: conflictPatterns,
+		rescanInterval:   rescanInterval,
+		renamePairWindow: renamePairWin,
 	}
 	w.watcherStatus.Store("ok")
 	return w
@@ -90,14 +94,14 @@ func (w *watcher) start() {
 	}
 
 	w.fw = fw
-	w.ticker = time.NewTicker(defaultRescanInterval)
+	w.ticker = time.NewTicker(w.rescanInterval)
 
 	w.wg.Add(1)
 	go w.loop()
 }
 
 func (w *watcher) startRescanOnly() {
-	w.ticker = time.NewTicker(defaultRescanInterval)
+	w.ticker = time.NewTicker(w.rescanInterval)
 	w.wg.Add(1)
 	go w.rescanLoop()
 }
@@ -196,7 +200,7 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 
 	case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
 		if !w.renames.MarkRemoved(name) {
-			time.AfterFunc(renamePairWindow, func() {
+			time.AfterFunc(w.renamePairWindow, func() {
 				select {
 				case <-w.done:
 					return

@@ -25,6 +25,9 @@ type vaultConfig struct {
 	ftsIndex         index.FTSIndex
 	clock            func() time.Time
 	conflictPatterns []*regexp.Regexp
+	actorOpts        []actor.Option
+	rescanInterval   time.Duration
+	renamePairWindow time.Duration
 }
 
 // WithIndexOptions passes options through to the default BM25 index.
@@ -49,6 +52,23 @@ func WithConflictPatterns(patterns []*regexp.Regexp) Option {
 	return func(c *vaultConfig) { c.conflictPatterns = patterns }
 }
 
+// WithActorOptions passes options through to the actor pool (e.g. WithBufferSize).
+func WithActorOptions(opts ...actor.Option) Option {
+	return func(c *vaultConfig) { c.actorOpts = append(c.actorOpts, opts...) }
+}
+
+// WithRescanInterval sets how often the watcher triggers a full vault rescan
+// (default: 60s).
+func WithRescanInterval(d time.Duration) Option {
+	return func(c *vaultConfig) { c.rescanInterval = d }
+}
+
+// WithRenamePairWindow sets how long the watcher waits to pair a REMOVE event
+// with a CREATE before treating it as a deletion (default: 50ms).
+func WithRenamePairWindow(d time.Duration) Option {
+	return func(c *vaultConfig) { c.renamePairWindow = d }
+}
+
 // LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
 	scope string
@@ -69,6 +89,8 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	cfg := vaultConfig{
 		clock:            time.Now,
 		conflictPatterns: DefaultConflictPatterns,
+		rescanInterval:   defaultRescanInterval,
+		renamePairWindow: defaultRenamePairWindow,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -85,7 +107,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		scope:  scope,
 		root:   root,
 		clock:  cfg.clock,
-		actors: actor.New(),
+		actors: actor.New(cfg.actorOpts...),
 		idx:    fts,
 		cache:  newNoteCache(),
 		graph:  newBacklinkGraph(),
@@ -98,7 +120,7 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	if err := v.scanVault(); err != nil {
 		return nil, fmt.Errorf("scan vault: %w", err)
 	}
-	v.w = newWatcher(v, root, cfg.conflictPatterns)
+	v.w = newWatcher(v, root, cfg.conflictPatterns, cfg.rescanInterval, cfg.renamePairWindow)
 	v.w.start()
 	return v, nil
 }
