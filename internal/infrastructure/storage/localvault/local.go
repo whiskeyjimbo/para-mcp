@@ -434,7 +434,7 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	hits := v.idx.Search(text, limit*3)
 	var results []domain.RankedNote
 	for _, h := range hits {
-		key := domain.IndexKey(h.Ref.Path, v.caps.CaseSensitive)
+		key := indexKey(h.Ref.Path, v.caps.CaseSensitive)
 		s, ok := v.cache.Get(key)
 		if !ok {
 			continue
@@ -463,7 +463,7 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 				continue
 			}
 			seen[src.path] = true
-			srcKey := domain.IndexKey(src.path, v.caps.CaseSensitive)
+			srcKey := indexKey(src.path, v.caps.CaseSensitive)
 			s, ok := v.cache.Get(srcKey)
 			if !ok {
 				continue
@@ -700,7 +700,7 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	lower := make(map[string]string, v.cache.Len())
 	var collisions []domain.CaseCollision
 	v.cache.Iterate(func(key string, s domain.NoteSummary) {
-		lk := domain.IndexKey(key, false)
+		lk := indexKey(key, false)
 		if prev, exists := lower[lk]; exists && prev != key {
 			collisions = append(collisions, domain.CaseCollision{PathA: prev, PathB: s.Ref.Path})
 		} else {
@@ -717,6 +717,13 @@ func summaryToDoc(s domain.NoteSummary, body string) ports.Doc {
 		Body:      body,
 		UpdatedAt: s.UpdatedAt,
 	}
+}
+
+func indexKey(path string, caseSensitive bool) string {
+	if caseSensitive {
+		return path
+	}
+	return strings.ToLower(path)
 }
 
 func isMDFile(path string) bool {

@@ -50,14 +50,6 @@ func Normalize(path string, caseSensitive bool) (NormalizedPath, error) {
 	return NormalizedPath{Storage: cleaned, IndexKey: indexKey}, nil
 }
 
-// IndexKey returns the index lookup key for a normalized path.
-func IndexKey(path string, caseSensitive bool) string {
-	if caseSensitive {
-		return path
-	}
-	return strings.ToLower(path)
-}
-
 // ArchivePath returns the archives/ equivalent of path by replacing its
 // first path segment with "archives".
 func ArchivePath(path string) (string, error) {
