@@ -23,7 +23,6 @@ type Option func(*vaultConfig)
 type vaultConfig struct {
 	indexOpts        []index.Option
 	ftsIndex         index.FTSIndex
-	templates        map[domain.Category]domain.CategoryTemplate
 	clock            func() time.Time
 	conflictPatterns []*regexp.Regexp
 }
@@ -39,11 +38,6 @@ func WithFTSIndex(i index.FTSIndex) Option {
 	return func(c *vaultConfig) { c.ftsIndex = i }
 }
 
-// WithTemplates overrides per-category creation templates (default: domain.DefaultTemplates).
-func WithTemplates(t map[domain.Category]domain.CategoryTemplate) Option {
-	return func(c *vaultConfig) { c.templates = t }
-}
-
 // WithClock overrides the time source for note timestamps (default: time.Now).
 func WithClock(fn func() time.Time) Option {
 	return func(c *vaultConfig) { c.clock = fn }
@@ -57,11 +51,10 @@ func WithConflictPatterns(patterns []*regexp.Regexp) Option {
 
 // LocalVault is a filesystem-backed implementation of ports.Vault.
 type LocalVault struct {
-	scope     string
-	root      string
-	caps      domain.Capabilities
-	templates map[domain.Category]domain.CategoryTemplate
-	clock     func() time.Time
+	scope string
+	root  string
+	caps  domain.Capabilities
+	clock func() time.Time
 
 	actors *actor.Pool
 	idx    index.FTSIndex
@@ -74,7 +67,6 @@ type LocalVault struct {
 // New creates a LocalVault rooted at root with the given scope.
 func New(scope, root string, opts ...Option) (*LocalVault, error) {
 	cfg := vaultConfig{
-		templates:        domain.DefaultTemplates,
 		clock:            time.Now,
 		conflictPatterns: DefaultConflictPatterns,
 	}
@@ -90,14 +82,13 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		fts = index.New(cfg.indexOpts...)
 	}
 	v := &LocalVault{
-		scope:     scope,
-		root:      root,
-		clock:     cfg.clock,
-		actors:    actor.New(),
-		idx:       fts,
-		cache:     newNoteCache(),
-		graph:     newBacklinkGraph(),
-		templates: cfg.templates,
+		scope:  scope,
+		root:   root,
+		clock:  cfg.clock,
+		actors: actor.New(),
+		idx:    fts,
+		cache:  newNoteCache(),
+		graph:  newBacklinkGraph(),
 		caps: domain.Capabilities{
 			Writable:      true,
 			SoftDelete:    true,
@@ -175,17 +166,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		absPath := filepath.Join(v.root, np.Storage)
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 			return err
-		}
-		cat, hasCat := domain.CategoryFromPath(np.Storage)
-		if hasCat {
-			if tmpl, ok := v.templates[cat]; ok {
-				if in.FrontMatter.Status == "" && tmpl.Status != "" {
-					in.FrontMatter.Status = tmpl.Status
-				}
-				if len(in.FrontMatter.Tags) == 0 && len(tmpl.Tags) > 0 {
-					in.FrontMatter.Tags = append(in.FrontMatter.Tags, tmpl.Tags...)
-				}
-			}
 		}
 		in.FrontMatter.CreatedAt = v.clock().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt

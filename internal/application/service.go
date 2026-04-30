@@ -19,12 +19,25 @@ var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil")
 // delegating to the underlying Vault port. It is the single entry point for
 // MCP tool handlers — handlers must never call a Vault directly.
 type NoteService struct {
-	vault ports.Vault
+	vault     ports.Vault
+	templates map[domain.Category]domain.CategoryTemplate
+}
+
+// Option configures a NoteService.
+type Option func(*NoteService)
+
+// WithTemplates overrides per-category creation templates (default: domain.DefaultTemplates).
+func WithTemplates(t map[domain.Category]domain.CategoryTemplate) Option {
+	return func(s *NoteService) { s.templates = t }
 }
 
 // NewService wraps a Vault with NoteRef validation.
-func NewService(v ports.Vault) *NoteService {
-	return &NoteService{vault: v}
+func NewService(v ports.Vault, opts ...Option) *NoteService {
+	s := &NoteService{vault: v, templates: domain.DefaultTemplates}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 func (s *NoteService) Get(ctx context.Context, ref domain.NoteRef) (domain.Note, error) {
@@ -41,6 +54,16 @@ func (s *NoteService) Create(ctx context.Context, in domain.CreateInput) (domain
 		return domain.NoteSummary{}, err
 	}
 	in.Path = np.Storage
+	if cat, ok := domain.CategoryFromPath(np.Storage); ok {
+		if tmpl, ok := s.templates[cat]; ok {
+			if in.FrontMatter.Status == "" && tmpl.Status != "" {
+				in.FrontMatter.Status = tmpl.Status
+			}
+			if len(in.FrontMatter.Tags) == 0 && len(tmpl.Tags) > 0 {
+				in.FrontMatter.Tags = append(in.FrontMatter.Tags, tmpl.Tags...)
+			}
+		}
+	}
 	return s.vault.Create(ctx, in)
 }
 
