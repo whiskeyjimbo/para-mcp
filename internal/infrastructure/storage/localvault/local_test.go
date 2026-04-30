@@ -17,7 +17,7 @@ func newTestVault(t *testing.T) *LocalVault {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(v.Close)
+	t.Cleanup(func() { _ = v.Close() })
 	return v
 }
 

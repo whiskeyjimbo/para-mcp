@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"io"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
@@ -41,6 +42,7 @@ type VaultBatcher interface {
 // AllowedScopes enforcement happens at the NoteService boundary; vault methods
 // receive plain Filter values with no authorization fields.
 type Vault interface {
+	io.Closer
 	VaultReader
 	VaultWriter
 	VaultBatcher

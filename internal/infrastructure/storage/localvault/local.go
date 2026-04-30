@@ -127,10 +127,11 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 }
 
 // Close shuts down background goroutines.
-func (v *LocalVault) Close() {
+func (v *LocalVault) Close() error {
 	v.w.close()
 	v.actors.Close()
 	v.idx.Close()
+	return nil
 }
 
 func (v *LocalVault) Scope() domain.ScopeID             { return v.scope }

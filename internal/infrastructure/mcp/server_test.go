@@ -45,7 +45,7 @@ func newTestService(t *testing.T) *application.NoteService {
 	if err != nil {
 		t.Fatalf("localvault.New: %v", err)
 	}
-	t.Cleanup(v.Close)
+	t.Cleanup(func() { _ = v.Close() })
 	return application.NewService(v)
 }
 
@@ -128,7 +128,7 @@ func TestWithClockInjectedIntoNotesStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("localvault.New: %v", err)
 	}
-	t.Cleanup(v.Close)
+	t.Cleanup(func() { _ = v.Close() })
 	fixed := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	svc := application.NewService(v, application.WithClock(func() time.Time { return fixed }))
 	h := &handlers{

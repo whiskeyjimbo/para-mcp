@@ -14,7 +14,7 @@ func newTestService(t *testing.T) *NoteService {
 	if err != nil {
 		t.Fatalf("localvault.New: %v", err)
 	}
-	t.Cleanup(v.Close)
+	t.Cleanup(func() { _ = v.Close() })
 	return NewService(v)
 }
 
