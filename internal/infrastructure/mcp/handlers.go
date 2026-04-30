@@ -152,20 +152,18 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 	for _, c := range req.GetStringSlice("categories", nil) {
 		cats = append(cats, domain.Category(c))
 	}
-	result, err := h.svc.Query(ctx, domain.QueryRequest{
-		Filter: domain.NewFilter(
+	result, err := h.svc.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryFilter(domain.NewFilter(
 			domain.WithStatus(req.GetString("status", "")),
 			domain.WithArea(req.GetString("area", "")),
 			domain.WithProject(req.GetString("project", "")),
 			domain.WithTags(req.GetStringSlice("tags", nil)...),
 			domain.WithCategories(cats...),
-		),
-		AllowedScopes: h.scopes.Scopes(ctx),
-		Sort:          domain.SortField(req.GetString("sort", string(domain.SortByUpdated))),
-		Desc:          req.GetBool("desc", false),
-		Limit:         req.GetInt("limit", defaultListLimit),
-		Offset:        req.GetInt("offset", 0),
-	})
+		)),
+		domain.WithQueryAllowedScopes(h.scopes.Scopes(ctx)),
+		domain.WithQuerySort(domain.SortField(req.GetString("sort", string(domain.SortByUpdated))), req.GetBool("desc", false)),
+		domain.WithQueryPagination(req.GetInt("limit", defaultListLimit), req.GetInt("offset", 0)),
+	))
 	if err != nil {
 		return toolErr(err), nil
 	}

@@ -153,14 +153,12 @@ func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.
 			ScopesSucceeded: []domain.ScopeID{s.vault.Scope()},
 		}, nil
 	}
-	return s.vault.Query(ctx, domain.QueryRequest{
-		Filter: q.Filter,
-		Sort:   q.Sort,
-		Desc:   q.Desc,
-		Limit:  q.Limit,
-		Offset: q.Offset,
-		Cursor: q.Cursor,
-	})
+	return s.vault.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryFilter(q.Filter),
+		domain.WithQuerySort(q.Sort, q.Desc),
+		domain.WithQueryPagination(q.Limit, q.Offset),
+		domain.WithQueryCursor(q.Cursor),
+	))
 }
 
 func (s *NoteService) Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error) {
@@ -187,17 +185,16 @@ func (s *NoteService) Stale(ctx context.Context, days int, categories []domain.C
 		return domain.QueryResult{}, nil
 	}
 	cutoff := s.clock().AddDate(0, 0, -days)
-	return s.Query(ctx, domain.QueryRequest{
-		Filter: domain.NewFilter(
+	return s.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryFilter(domain.NewFilter(
 			domain.WithStatus(status),
 			domain.WithUpdatedBefore(cutoff),
 			domain.WithCategories(categories...),
-		),
-		AllowedScopes: filter.AllowedScopes,
-		Sort:          domain.SortByUpdated,
-		Desc:          false,
-		Limit:         limit,
-	})
+		)),
+		domain.WithQueryAllowedScopes(filter.AllowedScopes),
+		domain.WithQuerySort(domain.SortByUpdated, false),
+		domain.WithQueryPagination(limit, 0),
+	))
 }
 
 func (s *NoteService) ListScopes(_ context.Context) []domain.ScopeInfo {
@@ -239,7 +236,10 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.vault.Query(ctx, domain.QueryRequest{Filter: filter.Filter, Limit: s.relatedScanLimit})
+	result, err := s.vault.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryFilter(filter.Filter),
+		domain.WithQueryPagination(s.relatedScanLimit, 0),
+	))
 	if err != nil {
 		return nil, err
 	}

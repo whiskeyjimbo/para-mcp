@@ -20,7 +20,7 @@ func newTestService(t *testing.T) *NoteService {
 
 func TestNoteService_Query_AllowedScopesNil(t *testing.T) {
 	svc := newTestService(t)
-	_, err := svc.Query(context.Background(), domain.QueryRequest{AllowedScopes: nil})
+	_, err := svc.Query(context.Background(), domain.NewQueryRequest(domain.WithQueryAllowedScopes(nil)))
 	if err == nil {
 		t.Fatal("nil AllowedScopes should return internal error")
 	}
@@ -30,7 +30,7 @@ func TestNoteService_Query_AllowedScopesEmpty(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	svc.Create(ctx, domain.CreateInput{Path: "projects/x.md", Body: "x"})
-	result, err := svc.Query(ctx, domain.QueryRequest{AllowedScopes: []domain.ScopeID{}})
+	result, err := svc.Query(ctx, domain.NewQueryRequest(domain.WithQueryAllowedScopes([]domain.ScopeID{})))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

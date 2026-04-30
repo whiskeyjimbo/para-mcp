@@ -153,11 +153,9 @@ func TestLocalVault_Query_Filter(t *testing.T) {
 		FrontMatter: domain.FrontMatter{Status: "inactive"},
 	})
 
-	result, err := v.Query(ctx, domain.QueryRequest{
-		Filter: domain.Filter{
-			Status: "active",
-		},
-	})
+	result, err := v.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryFilter(domain.NewFilter(domain.WithStatus("active"))),
+	))
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
