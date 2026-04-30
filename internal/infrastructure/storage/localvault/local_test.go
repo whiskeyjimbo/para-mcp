@@ -211,10 +211,11 @@ func TestLocalVault_TagNormalization(t *testing.T) {
 	v := newTestVault(t)
 	ctx := context.Background()
 
-	res, err := v.Create(ctx, domain.CreateInput{
-		Path:        "projects/tagged.md",
-		FrontMatter: domain.FrontMatter{Tags: []string{"AWS", "#Cloud", " infra "}},
-	})
+	res, err := v.Create(ctx, domain.NewCreateInput(
+		"projects/tagged.md",
+		domain.NewFrontMatter("", "", "", "", []string{"AWS", "#Cloud", " infra "}),
+		"",
+	))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

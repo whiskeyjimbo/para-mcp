@@ -221,8 +221,6 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		}
 		in.FrontMatter.CreatedAt = v.clock().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
-		in.FrontMatter.Tags = domain.NormalizeTags(in.FrontMatter.Tags)
-		in.FrontMatter.Status = domain.NormalizeStatus(in.FrontMatter.Status)
 		data, err := formatNote(in.FrontMatter, in.Body)
 		if err != nil {
 			return err
