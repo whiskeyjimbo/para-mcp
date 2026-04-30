@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/domain"
 	"github.com/whiskeyjimbo/paras/internal/actor"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 	"github.com/whiskeyjimbo/paras/internal/index"
 )
 

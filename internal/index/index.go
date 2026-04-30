@@ -14,7 +14,7 @@ import (
 	"unicode"
 
 	"github.com/kljensen/snowball/english"
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 )
 
 const (

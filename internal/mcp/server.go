@@ -10,7 +10,7 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 	"github.com/whiskeyjimbo/paras/internal/vault"
 )
 

@@ -3,7 +3,7 @@ package vault
 import (
 	"context"
 
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 )
 
 // NoteService validates all NoteRef inputs via domain.Normalize before

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 )
 
 const defaultRescanInterval = 60 * time.Second

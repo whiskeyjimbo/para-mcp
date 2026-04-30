@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 	"github.com/whiskeyjimbo/paras/internal/index"
 )
 

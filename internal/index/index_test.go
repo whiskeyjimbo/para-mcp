@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 )
 
 func ref(scope, path string) domain.NoteRef {

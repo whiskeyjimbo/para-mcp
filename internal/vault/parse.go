@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/whiskeyjimbo/paras/domain"
+	"github.com/whiskeyjimbo/paras/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
