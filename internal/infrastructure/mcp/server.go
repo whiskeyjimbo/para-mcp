@@ -15,13 +15,14 @@ import (
 type Option func(*buildConfig)
 
 type buildConfig struct {
-	scopes           ports.ScopeResolver
-	serverName       string
-	serverVersion    string
-	events           *EventBus
-	auditSearcher    audit.Searcher
-	rbacRegistry     *rbac.Registry
-	exposeAdminTools bool
+	scopes                   ports.ScopeResolver
+	serverName               string
+	serverVersion            string
+	events                   *EventBus
+	auditSearcher            audit.Searcher
+	rbacRegistry             *rbac.Registry
+	exposeAdminTools         bool
+	requirePromotionApproval bool
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -65,6 +66,13 @@ func WithExposeAdminTools(v bool) Option {
 	return func(c *buildConfig) { c.exposeAdminTools = v }
 }
 
+// WithRequirePromotionApproval enables the require_promotion_approval flag (default off).
+// When true, note_promote returns a pending_approval status instead of executing;
+// the full approval workflow is deferred (ADR-0006).
+func WithRequirePromotionApproval(v bool) Option {
+	return func(c *buildConfig) { c.requirePromotionApproval = v }
+}
+
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 })
@@ -87,12 +95,13 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	)
 
 	h := &handlers{
-		svc:              svc,
-		scopes:           cfg.scopes,
-		events:           cfg.events,
-		auditSearcher:    cfg.auditSearcher,
-		rbacRegistry:     cfg.rbacRegistry,
-		exposeAdminTools: cfg.exposeAdminTools,
+		svc:                      svc,
+		scopes:                   cfg.scopes,
+		events:                   cfg.events,
+		auditSearcher:            cfg.auditSearcher,
+		rbacRegistry:             cfg.rbacRegistry,
+		exposeAdminTools:         cfg.exposeAdminTools,
+		requirePromotionApproval: cfg.requirePromotionApproval,
 	}
 
 	s.AddTool(toolNoteGet(), h.noteGet)

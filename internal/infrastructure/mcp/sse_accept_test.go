@@ -102,6 +102,16 @@ func TestSSEPushInvalidatesSummaryCache(t *testing.T) {
 		t.Fatalf("after second Query (cache hit expected): server calls = %d, want 1", got)
 	}
 
+	// Wait for the watch goroutine to establish its SSE connection before publishing.
+	// Without this, the event may be broadcast with no subscribers and be dropped.
+	connectDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(connectDeadline) && bus.SubscriberCount() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if bus.SubscriberCount() == 0 {
+		t.Fatal("SSE watch goroutine did not connect within 2 s")
+	}
+
 	// Push an SSE event from the server side.
 	bus.Publish(NoteEvent{Type: "note_changed", Scope: scope, Path: "docs/foo.md"})
 

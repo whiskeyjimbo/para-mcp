@@ -40,6 +40,13 @@ func (b *EventBus) Publish(e NoteEvent) {
 	}
 }
 
+// SubscriberCount returns the current number of active subscribers.
+func (b *EventBus) SubscriberCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subscribers)
+}
+
 // Subscribe returns a channel that receives events and an unsubscribe function.
 func (b *EventBus) Subscribe() (<-chan NoteEvent, func()) {
 	b.mu.Lock()

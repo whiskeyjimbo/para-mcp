@@ -23,12 +23,13 @@ const (
 )
 
 type handlers struct {
-	svc              ports.NoteService
-	scopes           ports.ScopeResolver
-	events           *EventBus
-	auditSearcher    audit.Searcher
-	rbacRegistry     *rbac.Registry
-	exposeAdminTools bool
+	svc                      ports.NoteService
+	scopes                   ports.ScopeResolver
+	events                   *EventBus
+	auditSearcher            audit.Searcher
+	rbacRegistry             *rbac.Registry
+	exposeAdminTools         bool
+	requirePromotionApproval bool
 }
 
 // requireRole returns a permission_denied error result when the caller does not
@@ -218,6 +219,12 @@ func (h *handlers) notePromote(ctx context.Context, req mcplib.CallToolRequest) 
 	// Promote requires Lead on the destination scope.
 	if denied := h.requireRole(ctx, domain.ScopeID(toScope), rbac.Lead); denied != nil {
 		return denied, nil
+	}
+	// When require_promotion_approval is enabled, short-circuit and return a
+	// pending_approval status instead of executing. Workflow approval mechanism
+	// is deferred (ADR-0006); this ships the flag infrastructure only.
+	if h.requirePromotionApproval {
+		return jsonResult(map[string]string{"status": "pending_approval"})
 	}
 	in := domain.PromoteInput{
 		Ref:            ref,

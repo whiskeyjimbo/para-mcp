@@ -220,6 +220,68 @@ func TestAuthAccept_LeadCanPromote(t *testing.T) {
 	}
 }
 
+// --- Scenario 3b: require_promotion_approval flag ---
+
+func TestAuthAccept_RequirePromotionApproval_ReturnssPendingWhenEnabled(t *testing.T) {
+	reg := rbac.New(rbac.WithRoleLoader([]rbac.ScopeGrant{
+		{Identity: "carol", Scope: "team-platform", Role: rbac.Lead},
+	}))
+	v, err := localvault.New("team-platform", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault.New: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	svc := application.NewService(v)
+	h := &handlers{
+		svc:                      svc,
+		scopes:                   personalOnly,
+		rbacRegistry:             reg,
+		exposeAdminTools:         true,
+		requirePromotionApproval: true,
+	}
+
+	ctx := callerCtx("carol")
+	res, err := h.notePromote(ctx, promoteReq("team-platform", "projects/foo.md", "team-platform"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("pending_approval should be a non-error result; got: %s", resultText(res))
+	}
+	if !strings.Contains(resultText(res), "pending_approval") {
+		t.Errorf("want pending_approval in result, got: %s", resultText(res))
+	}
+}
+
+func TestAuthAccept_RequirePromotionApproval_ExecutesWhenDisabled(t *testing.T) {
+	reg := rbac.New(rbac.WithRoleLoader([]rbac.ScopeGrant{
+		{Identity: "carol", Scope: "team-platform", Role: rbac.Lead},
+	}))
+	v, err := localvault.New("team-platform", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault.New: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	svc := application.NewService(v)
+	h := &handlers{
+		svc:                      svc,
+		scopes:                   personalOnly,
+		rbacRegistry:             reg,
+		exposeAdminTools:         true,
+		requirePromotionApproval: false,
+	}
+
+	ctx := callerCtx("carol")
+	res, err := h.notePromote(ctx, promoteReq("team-platform", "projects/nonexistent.md", "team-platform"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Flag is off: execution proceeds; result is a domain error (not-found), not pending_approval.
+	if strings.Contains(resultText(res), "pending_approval") {
+		t.Errorf("flag is off; should not return pending_approval, got: %s", resultText(res))
+	}
+}
+
 // --- Scenario 4: audit_search gating ---
 
 func TestAuthAccept_AuditSearch_AdminSeesRows(t *testing.T) {
