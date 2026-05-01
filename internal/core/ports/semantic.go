@@ -1,0 +1,36 @@
+package ports
+
+import (
+	"context"
+	"io"
+
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+)
+
+// Embedder converts text into dense vector representations.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+	Dims() int
+	ModelName() string
+}
+
+// VectorStore persists and queries dense vector records.
+// AllowedScopes pre-filtering is enforced inside Search; callers must supply
+// an AuthFilter with a non-nil AllowedScopes slice.
+type VectorStore interface {
+	io.Closer
+	Upsert(ctx context.Context, records []domain.VectorRecord) error
+	Search(ctx context.Context, query []float32, filter domain.AuthFilter, k int) ([]domain.VectorHit, error)
+	Delete(ctx context.Context, ids []string) error
+	Tombstone(ctx context.Context, ids []string) error
+}
+
+// Summarizer generates DerivedMetadata for a note body.
+type Summarizer interface {
+	Summarize(ctx context.Context, ref domain.NoteRef, body string) (*domain.DerivedMetadata, error)
+}
+
+// Reranker re-scores vector hits given the original query string.
+type Reranker interface {
+	Rerank(ctx context.Context, query string, hits []domain.VectorHit) ([]domain.VectorHit, error)
+}
