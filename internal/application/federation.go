@@ -30,7 +30,11 @@ type idempotencyEntry struct {
 	expiry time.Time
 }
 
-const idempotencyTTL = 24 * time.Hour
+const (
+	idempotencyTTL          = 24 * time.Hour
+	idempotencyMaxSize      = 10_000
+	idempotencyDefaultSweep = 5 * time.Minute
+)
 
 // FederationService implements ports.NoteService by fan-out across all
 // registered vaults. Single-vault operations (Get, Create, etc.) route
@@ -44,6 +48,9 @@ type FederationService struct {
 	idMinter         func() string
 	idempotencyMu    sync.Mutex
 	idempotencyCache map[string]idempotencyEntry
+	idempotencySweep time.Duration
+	stopSweep        chan struct{}
+	sweepDone        chan struct{}
 }
 
 // NewFederationService creates a FederationService backed by reg.
@@ -76,6 +83,12 @@ func WithCursorStore(s cursorstore.CursorStore) FederationOption {
 	return func(f *FederationService) { f.cursorStore = newPublicCursorStoreAdapter(s) }
 }
 
+// WithIdempotencySweepInterval overrides the interval at which expired idempotency
+// cache entries are batch-evicted (default: 5 minutes).
+func WithIdempotencySweepInterval(d time.Duration) FederationOption {
+	return func(f *FederationService) { f.idempotencySweep = d }
+}
+
 // NewFederationServiceWithKey creates a FederationService with an explicit HMAC key.
 func NewFederationServiceWithKey(reg *VaultRegistry, key []byte, opts ...FederationOption) *FederationService {
 	f := &FederationService{
@@ -85,11 +98,21 @@ func NewFederationServiceWithKey(reg *VaultRegistry, key []byte, opts ...Federat
 		tombstones:       newInMemoryTombstoneStore(),
 		idMinter:         defaultFederationIDMinter,
 		idempotencyCache: make(map[string]idempotencyEntry),
+		idempotencySweep: idempotencyDefaultSweep,
+		stopSweep:        make(chan struct{}),
+		sweepDone:        make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(f)
 	}
+	go f.runIdempotencySweep()
 	return f
+}
+
+// Close stops the background idempotency sweep goroutine.
+func (f *FederationService) Close() {
+	close(f.stopSweep)
+	<-f.sweepDone
 }
 
 // localEntry returns the first registered vault entry (the local vault).
@@ -623,7 +646,6 @@ func (f *FederationService) lookupIdempotency(key string) (domain.MutationResult
 		return domain.MutationResult{}, false
 	}
 	if time.Now().After(e.expiry) {
-		delete(f.idempotencyCache, key)
 		return domain.MutationResult{}, false
 	}
 	return e.result, true
@@ -631,8 +653,36 @@ func (f *FederationService) lookupIdempotency(key string) (domain.MutationResult
 
 func (f *FederationService) storeIdempotency(key string, result domain.MutationResult) {
 	f.idempotencyMu.Lock()
+	defer f.idempotencyMu.Unlock()
+	if len(f.idempotencyCache) >= idempotencyMaxSize {
+		// Evict one arbitrary entry to stay within the size cap.
+		for k := range f.idempotencyCache {
+			delete(f.idempotencyCache, k)
+			break
+		}
+	}
 	f.idempotencyCache[key] = idempotencyEntry{result: result, expiry: time.Now().Add(idempotencyTTL)}
-	f.idempotencyMu.Unlock()
+}
+
+func (f *FederationService) runIdempotencySweep() {
+	defer close(f.sweepDone)
+	ticker := time.NewTicker(f.idempotencySweep)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-f.stopSweep:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			f.idempotencyMu.Lock()
+			for k, e := range f.idempotencyCache {
+				if now.After(e.expiry) {
+					delete(f.idempotencyCache, k)
+				}
+			}
+			f.idempotencyMu.Unlock()
+		}
+	}
 }
 
 func defaultFederationIDMinter() string {

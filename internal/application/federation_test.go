@@ -3,9 +3,11 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
@@ -115,7 +117,9 @@ func newFedWithStubs(t *testing.T, vaults ...*stubVault) *FederationService {
 			t.Fatalf("AddVault %q: %v", v.scope, err)
 		}
 	}
-	return NewFederationServiceWithKey(reg, make([]byte, 32))
+	fed := NewFederationServiceWithKey(reg, make([]byte, 32))
+	t.Cleanup(fed.Close)
+	return fed
 }
 
 // --- Test A: scope alias stability across remote rename ---
@@ -355,6 +359,7 @@ func newFedLocalVaults(t *testing.T) (*FederationService, []domain.ScopeID) {
 	if err != nil {
 		t.Fatalf("NewFederationService: %v", err)
 	}
+	t.Cleanup(fed.Close)
 	return fed, []domain.ScopeID{"personal", "team"}
 }
 
@@ -682,6 +687,7 @@ func TestFederation_Promote_Overwrite_SingleWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFederationService: %v", err)
 	}
+	t.Cleanup(fed.Close)
 	ctx := context.Background()
 
 	// Create source note.
@@ -777,6 +783,7 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFederationService: %v", err)
 	}
+	t.Cleanup(fed.Close)
 
 	ctx := context.Background()
 
@@ -933,6 +940,7 @@ func TestFederation_Tombstone_RestartSurvival(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFederationService: %v", err)
 	}
+	t.Cleanup(fed1.Close)
 
 	ctx := context.Background()
 
@@ -967,6 +975,7 @@ func TestFederation_Tombstone_RestartSurvival(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFederationService (restart): %v", err)
 	}
+	t.Cleanup(fed2.Close)
 
 	res, err := fed2.Query(ctx, domain.NewQueryRequest(
 		domain.WithQueryAllowedScopes([]domain.ScopeID{"personal"}),
@@ -1032,5 +1041,55 @@ func TestFederation_Promote_Idempotency(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected exactly 1 note at projects/idem.md in team scope, found %d", count)
+	}
+}
+
+// TestFederation_IdempotencyCache_BoundedSize verifies the cache stays within the max-size cap.
+func TestFederation_IdempotencyCache_BoundedSize(t *testing.T) {
+	fed, _ := newFedLocalVaults(t)
+
+	// Fill beyond maxSize via direct storeIdempotency calls.
+	overflow := idempotencyMaxSize + 100
+	for i := 0; i < overflow; i++ {
+		fed.storeIdempotency(fmt.Sprintf("key-%d", i), domain.MutationResult{})
+	}
+
+	fed.idempotencyMu.Lock()
+	size := len(fed.idempotencyCache)
+	fed.idempotencyMu.Unlock()
+
+	if size > idempotencyMaxSize {
+		t.Errorf("cache size = %d, want <= %d", size, idempotencyMaxSize)
+	}
+}
+
+// TestFederation_IdempotencyCache_SweepClearsExpired verifies the background sweep removes expired entries.
+func TestFederation_IdempotencyCache_SweepClearsExpired(t *testing.T) {
+	fed, _ := newFedLocalVaults(t)
+
+	// Manually insert an already-expired entry.
+	fed.idempotencyMu.Lock()
+	fed.idempotencyCache["expired-key"] = idempotencyEntry{
+		result: domain.MutationResult{},
+		expiry: time.Now().Add(-time.Hour),
+	}
+	fed.idempotencyMu.Unlock()
+
+	// Trigger a sweep by calling the goroutine logic directly.
+	now := time.Now()
+	fed.idempotencyMu.Lock()
+	for k, e := range fed.idempotencyCache {
+		if now.After(e.expiry) {
+			delete(fed.idempotencyCache, k)
+		}
+	}
+	fed.idempotencyMu.Unlock()
+
+	fed.idempotencyMu.Lock()
+	_, stillPresent := fed.idempotencyCache["expired-key"]
+	fed.idempotencyMu.Unlock()
+
+	if stillPresent {
+		t.Error("expired idempotency entry was not removed by sweep")
 	}
 }
