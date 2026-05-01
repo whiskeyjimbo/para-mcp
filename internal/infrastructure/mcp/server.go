@@ -7,16 +7,21 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/server/audit"
+	"github.com/whiskeyjimbo/paras/internal/server/rbac"
 )
 
 // Option configures a Build call.
 type Option func(*buildConfig)
 
 type buildConfig struct {
-	scopes        ports.ScopeResolver
-	serverName    string
-	serverVersion string
-	events        *EventBus
+	scopes           ports.ScopeResolver
+	serverName       string
+	serverVersion    string
+	events           *EventBus
+	auditSearcher    audit.Searcher
+	rbacRegistry     *rbac.Registry
+	exposeAdminTools bool
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -44,6 +49,22 @@ func WithEventBus(bus *EventBus) Option {
 	return func(c *buildConfig) { c.events = bus }
 }
 
+// WithAuditSearcher enables the audit_search admin tool backed by s.
+func WithAuditSearcher(s audit.Searcher) Option {
+	return func(c *buildConfig) { c.auditSearcher = s }
+}
+
+// WithRBACRegistry sets the RBAC registry used to gate admin tools.
+func WithRBACRegistry(r *rbac.Registry) Option {
+	return func(c *buildConfig) { c.rbacRegistry = r }
+}
+
+// WithExposeAdminTools enables admin tools (audit_search etc.) when true.
+// Has no effect unless WithAuditSearcher and WithRBACRegistry are also set.
+func WithExposeAdminTools(v bool) Option {
+	return func(c *buildConfig) { c.exposeAdminTools = v }
+}
+
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 })
@@ -65,7 +86,14 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: cfg.scopes, events: cfg.events}
+	h := &handlers{
+		svc:              svc,
+		scopes:           cfg.scopes,
+		events:           cfg.events,
+		auditSearcher:    cfg.auditSearcher,
+		rbacRegistry:     cfg.rbacRegistry,
+		exposeAdminTools: cfg.exposeAdminTools,
+	}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -88,6 +116,10 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	s.AddTool(toolNotesCreateBatch(), h.notesCreateBatch)
 	s.AddTool(toolNotesUpdateBatch(), h.notesUpdateBatch)
 	s.AddTool(toolNotesPatchFrontMatterBatch(), h.notesPatchFrontMatterBatch)
+
+	if cfg.exposeAdminTools {
+		s.AddTool(toolAuditSearch(), h.auditSearch)
+	}
 
 	return s
 }

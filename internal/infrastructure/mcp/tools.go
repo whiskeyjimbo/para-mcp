@@ -187,3 +187,17 @@ func toolNotesPatchFrontMatterBatch() mcplib.Tool {
 		mcplib.WithArray("notes", mcplib.Required(), mcplib.Description("array of objects"), mcplib.Description(`Array of objects with "scope", "path", "fields"; optional "if_match"`)),
 	)
 }
+
+func toolAuditSearch() mcplib.Tool {
+	return mcplib.NewTool("audit_search",
+		mcplib.WithDescription("Search the immutable audit log. Admin only. Requires expose_admin_tools=true and admin role on the queried scope."),
+		mcplib.WithString("scope", mcplib.Required(), mcplib.Description("Scope to query audit rows for. Caller must hold admin role on this scope.")),
+		mcplib.WithString("actor", mcplib.Description("Filter by actor identity (exact match)")),
+		mcplib.WithString("action", mcplib.Description("Filter by action name (exact match)")),
+		mcplib.WithString("outcome", mcplib.Description("Filter by outcome: ok or error")),
+		mcplib.WithString("since", mcplib.Description("RFC3339 lower bound (inclusive)")),
+		mcplib.WithString("until", mcplib.Description("RFC3339 upper bound (inclusive)")),
+		mcplib.WithNumber("limit", mcplib.Description("Max rows to return (default 50)")),
+		mcplib.WithNumber("offset", mcplib.Description("Pagination offset")),
+	)
+}

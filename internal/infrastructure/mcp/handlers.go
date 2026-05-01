@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
+	"github.com/whiskeyjimbo/paras/internal/server/audit"
+	"github.com/whiskeyjimbo/paras/internal/server/auth"
+	"github.com/whiskeyjimbo/paras/internal/server/rbac"
 )
 
 const (
@@ -19,9 +23,12 @@ const (
 )
 
 type handlers struct {
-	svc    ports.NoteService
-	scopes ports.ScopeResolver
-	events *EventBus
+	svc              ports.NoteService
+	scopes           ports.ScopeResolver
+	events           *EventBus
+	auditSearcher    audit.Searcher
+	rbacRegistry     *rbac.Registry
+	exposeAdminTools bool
 }
 
 func (h *handlers) publishChange(eventType string, ref domain.NoteRef) {
@@ -499,4 +506,57 @@ func toolErr(ctx context.Context, err error) *mcplib.CallToolResult {
 		}
 	}
 	return mcplib.NewToolResultError(err.Error())
+}
+
+const errPermissionDenied = "permission_denied: audit_search requires admin role and expose_admin_tools enabled"
+
+func (h *handlers) auditSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	// Gate: expose_admin_tools flag must be true.
+	if !h.exposeAdminTools {
+		return mcplib.NewToolResultError(errPermissionDenied), nil
+	}
+
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
+
+	// Gate: caller must hold Admin role on the requested scope.
+	caller, ok := auth.CallerFrom(ctx)
+	if !ok || h.rbacRegistry == nil || !h.rbacRegistry.HasRole(caller, domain.ScopeID(scope), rbac.Admin) {
+		return mcplib.NewToolResultError(errPermissionDenied), nil
+	}
+
+	if h.auditSearcher == nil {
+		return mcplib.NewToolResultError("audit search not available"), nil
+	}
+
+	f := audit.SearchFilter{
+		Actor:   req.GetString("actor", ""),
+		Action:  req.GetString("action", ""),
+		Outcome: req.GetString("outcome", ""),
+		Scope:   scope,
+		Limit:   int(req.GetFloat("limit", 0)),
+		Offset:  int(req.GetFloat("offset", 0)),
+	}
+	if s := req.GetString("since", ""); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return mcplib.NewToolResultError("invalid since: " + err.Error()), nil
+		}
+		f.Since = t
+	}
+	if s := req.GetString("until", ""); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return mcplib.NewToolResultError("invalid until: " + err.Error()), nil
+		}
+		f.Until = t
+	}
+
+	rows, err := h.auditSearcher.Search(ctx, f)
+	if err != nil {
+		return mcplib.NewToolResultError("audit search: " + err.Error()), nil
+	}
+	return jsonResult(rows)
 }
