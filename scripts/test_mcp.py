@@ -326,7 +326,11 @@ def run_tests(c: MCPClient):
         "body": "This should fail.",
         "if_match": etag_hello,  # stale
     })
-    check_err("stale ETag → conflict", resp, "conflict")
+    conflict_text = check_err("stale ETag → conflict", resp, "conflict")
+    conflict_data = parse_json(conflict_text)
+    check("conflict response is JSON with error=conflict",
+          conflict_data is not None and conflict_data.get("error") == "conflict",
+          conflict_text)
 
     # Force overwrite (no if_match)
     resp = c.call("note_update_body", {
@@ -637,6 +641,12 @@ def run_tests(c: MCPClient):
     # Single-vault mode has no cross-scope capability; promote always returns scope_forbidden.
     resp = c.call("note_promote", {"scope": "personal", "path": "projects/any.md", "to_scope": "team"})
     check_err("note_promote in single-vault → scope_forbidden", resp, "scope_forbidden")
+
+    section("audit_search")
+    # audit_search is only registered when expose_admin_tools=true; the default binary does not
+    # enable it, so calling it should return a tool-not-found error from the MCP layer.
+    resp = c.call("audit_search", {"scope": "personal"})
+    check_err("audit_search not registered in default binary mode → error", resp)
 
 
 def run_phase2_tests(c: MCPClient, vault_dir: str):
@@ -1256,6 +1266,107 @@ def run_federation_tests(binary: str):
         shutil.rmtree(remote_vault, ignore_errors=True)
 
 
+def run_promotion_approval_tests(binary: str):
+    """
+    Verifies the require_promotion_approval flag (ADR-0006).
+
+    Starts a remote server (team scope), then starts a gateway with
+    --require-promotion-approval. Checks that note_promote returns a
+    non-error pending_approval status rather than executing immediately.
+
+    Note: there is currently no approval/reject endpoint — that workflow
+    is deferred to post-Phase-5. The flag ships infra only.
+    """
+    remote_vault = tempfile.mkdtemp(prefix="paras-promo-approval-remote-")
+    local_vault = tempfile.mkdtemp(prefix="paras-promo-approval-local-")
+    config_path = None
+    remote_proc = None
+    gw = None
+
+    try:
+        os.makedirs(os.path.join(remote_vault, "projects"), exist_ok=True)
+        os.makedirs(os.path.join(local_vault, "projects"), exist_ok=True)
+
+        port = find_free_port()
+        remote_proc = subprocess.Popen(
+            [binary, "--vault", remote_vault, "--scope", "team", "--addr", f":{port}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        section("promotion_approval/setup")
+        if not wait_for_port("localhost", port):
+            check("remote server started", False, f"timed out on port {port}")
+            return
+        check("remote server started", True)
+
+        fd, config_path = tempfile.mkstemp(suffix=".yaml")
+        with os.fdopen(fd, "w") as f:
+            f.write(
+                f"local:\n  vault: {local_vault}\n  scope: personal\n"
+                f"remotes:\n  - scope: team\n    url: http://localhost:{port}/mcp\n"
+            )
+
+        # Start gateway with --require-promotion-approval.
+        args = [binary, "--config", config_path, "--require-promotion-approval"]
+        gw_proc = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        gw = MCPClient.__new__(MCPClient)
+        gw.proc = gw_proc
+        gw._stderr_lines = []
+        threading.Thread(target=gw._drain_stderr, daemon=True).start()
+        gw.initialize()
+
+        # Seed a personal note to promote.
+        resp = gw.call("note_create", {"path": "projects/approval-test.md",
+                                       "body": "pending promotion", "title": "Approval Test"})
+        is_err, _ = check_ok("create personal note for approval test", resp)
+        if is_err:
+            return
+
+        section("promotion_approval/note_promote_returns_pending")
+        resp = gw.call("note_promote", {
+            "scope": "personal",
+            "path": "projects/approval-test.md",
+            "to_scope": "team",
+        })
+        is_err, text = result_content(resp)
+        check("promote returns non-error result (not rejected)", not is_err, text)
+        data = parse_json(text) if not is_err else None
+        check("status=pending_approval in response",
+              data is not None and data.get("status") == "pending_approval",
+              text)
+
+        section("promotion_approval/note_not_promoted")
+        # The note must NOT have been written to the remote scope.
+        resp = gw.call("note_get", {"scope": "team", "path": "projects/approval-test.md"})
+        is_err2, _ = result_content(resp)
+        check("note absent from team scope (pending, not executed)", is_err2)
+
+    finally:
+        if gw and hasattr(gw, "proc"):
+            try:
+                gw.proc.stdin.close()
+            except Exception:
+                pass
+            gw.proc.wait(timeout=5)
+        if remote_proc:
+            remote_proc.terminate()
+            try:
+                remote_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                remote_proc.kill()
+                remote_proc.wait(timeout=3)
+        if config_path and os.path.exists(config_path):
+            os.unlink(config_path)
+        shutil.rmtree(remote_vault, ignore_errors=True)
+        shutil.rmtree(local_vault, ignore_errors=True)
+
+
 def main():
     global verbose
 
@@ -1298,6 +1409,7 @@ def main():
                 c.close()
 
         run_federation_tests(binary)
+        run_promotion_approval_tests(binary)
 
     finally:
         if not args.binary:

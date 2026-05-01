@@ -43,6 +43,7 @@ func main() {
 	scopeID := flag.String("scope", "personal", "scope identifier for this vault (single-vault mode)")
 	configFile := flag.String("config", "", "path to federation config file (YAML)")
 	addr := flag.String("addr", "", "HTTP listen address for server mode (e.g. :8080)")
+	requirePromotionApproval := flag.Bool("require-promotion-approval", false, "gate note_promote with pending_approval (ADR-0006)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -80,6 +81,7 @@ func main() {
 	s := mcplayer.Build(svc,
 		mcplayer.WithScopesFunc(func(_ context.Context) []domain.ScopeID { return scopes }),
 		mcplayer.WithEventBus(bus),
+		mcplayer.WithRequirePromotionApproval(*requirePromotionApproval),
 	)
 
 	if *addr != "" {
