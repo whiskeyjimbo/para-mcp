@@ -12,6 +12,7 @@ import (
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/server/cursorstore"
 )
 
 const maxCursorOffset = 500
@@ -69,12 +70,18 @@ func WithFederationIDMinter(fn func() string) FederationOption {
 	return func(f *FederationService) { f.idMinter = fn }
 }
 
+// WithCursorStore replaces the default in-memory cursor store with a
+// pluggable implementation (Postgres or Redis for multi-replica deploys).
+func WithCursorStore(s cursorstore.CursorStore) FederationOption {
+	return func(f *FederationService) { f.cursorStore = newPublicCursorStoreAdapter(s) }
+}
+
 // NewFederationServiceWithKey creates a FederationService with an explicit HMAC key.
 func NewFederationServiceWithKey(reg *VaultRegistry, key []byte, opts ...FederationOption) *FederationService {
 	f := &FederationService{
 		reg:              reg,
 		cursorKey:        key,
-		cursorStore:      newInMemoryCursorStore(),
+		cursorStore:      newDefaultCursorStore(),
 		tombstones:       newInMemoryTombstoneStore(),
 		idMinter:         defaultFederationIDMinter,
 		idempotencyCache: make(map[string]idempotencyEntry),
@@ -121,7 +128,7 @@ func (f *FederationService) Query(ctx context.Context, q domain.QueryRequest) (d
 	if q.AllowedScopes == nil {
 		return domain.QueryResult{}, errAllowedScopesNil
 	}
-	effectiveScopes, offsets, err := f.resolveScopesAndOffsets(q)
+	effectiveScopes, offsets, err := f.resolveScopesAndOffsets(ctx, q)
 	if err != nil {
 		return domain.QueryResult{}, err
 	}
@@ -204,7 +211,7 @@ func (f *FederationService) Query(ctx context.Context, q domain.QueryRequest) (d
 
 	var nextCursor string
 	if hasMore {
-		nextCursor, err = encodeCursor(f.cursorKey, f.cursorStore, cursorPayload{
+		nextCursor, err = encodeCursor(ctx, f.cursorKey, f.cursorStore, cursorPayload{
 			Sort:    q.Sort,
 			Desc:    q.Desc,
 			Scopes:  effectiveScopes,
@@ -543,9 +550,9 @@ func (f *FederationService) effectiveScopes(allowed, requested []domain.ScopeID)
 
 // resolveScopesAndOffsets decodes the cursor (if present) to get the sticky
 // scope-set and per-scope offsets, or builds fresh values from the request.
-func (f *FederationService) resolveScopesAndOffsets(q domain.QueryRequest) ([]domain.ScopeID, map[domain.ScopeID]int, error) {
+func (f *FederationService) resolveScopesAndOffsets(ctx context.Context, q domain.QueryRequest) ([]domain.ScopeID, map[domain.ScopeID]int, error) {
 	if q.Cursor != "" {
-		p, err := decodeCursor(f.cursorKey, f.cursorStore, q.Cursor)
+		p, err := decodeCursor(ctx, f.cursorKey, f.cursorStore, q.Cursor)
 		if err != nil {
 			return nil, nil, err
 		}

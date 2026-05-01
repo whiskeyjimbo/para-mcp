@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,17 +9,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/server/cursorstore"
 )
 
 const (
 	cursorHandlePrefix = "h:"
 	cursorInlineBudget = 1024
 	cursorHandleTTL    = 10 * time.Minute
-	cursorStoreMax     = 10_000
 )
 
 type cursorPayload struct {
@@ -28,51 +28,47 @@ type cursorPayload struct {
 	Offsets map[domain.ScopeID]int `json:"o"`
 }
 
+// cursorStore is the private interface used by encodeCursor/decodeCursor.
 type cursorStore interface {
-	set(handle string, p cursorPayload)
-	get(handle string) (cursorPayload, bool)
+	set(ctx context.Context, handle string, p cursorPayload)
+	get(ctx context.Context, handle string) (cursorPayload, bool)
 }
 
-type inMemoryCursorStore struct {
-	mu      sync.Mutex
-	entries map[string]cursorEntry
+// publicCursorStoreAdapter bridges cursorstore.CursorStore to the private interface.
+type publicCursorStoreAdapter struct {
+	store cursorstore.CursorStore
+	ttl   time.Duration
 }
 
-type cursorEntry struct {
-	payload cursorPayload
-	expiry  time.Time
+func newPublicCursorStoreAdapter(s cursorstore.CursorStore) *publicCursorStoreAdapter {
+	return &publicCursorStoreAdapter{store: s, ttl: cursorHandleTTL}
 }
 
-func newInMemoryCursorStore() *inMemoryCursorStore {
-	return &inMemoryCursorStore{entries: make(map[string]cursorEntry)}
-}
-
-func (s *inMemoryCursorStore) set(handle string, p cursorPayload) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.entries) >= cursorStoreMax {
-		now := time.Now()
-		for k, e := range s.entries {
-			if now.After(e.expiry) {
-				delete(s.entries, k)
-			}
-		}
+func (a *publicCursorStoreAdapter) set(ctx context.Context, handle string, p cursorPayload) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return
 	}
-	s.entries[handle] = cursorEntry{payload: p, expiry: time.Now().Add(cursorHandleTTL)}
+	_ = a.store.Put(ctx, handle, cursorstore.Cursor{Data: data}, a.ttl)
 }
 
-func (s *inMemoryCursorStore) get(handle string) (cursorPayload, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[handle]
-	if !ok || time.Now().After(e.expiry) {
-		delete(s.entries, handle)
+func (a *publicCursorStoreAdapter) get(ctx context.Context, handle string) (cursorPayload, bool) {
+	c, err := a.store.Get(ctx, handle)
+	if err != nil {
 		return cursorPayload{}, false
 	}
-	return e.payload, true
+	var p cursorPayload
+	if err := json.Unmarshal(c.Data, &p); err != nil {
+		return cursorPayload{}, false
+	}
+	return p, true
 }
 
-func encodeCursor(key []byte, store cursorStore, p cursorPayload) (string, error) {
+func newDefaultCursorStore() cursorStore {
+	return newPublicCursorStoreAdapter(cursorstore.NewInMemory())
+}
+
+func encodeCursor(ctx context.Context, key []byte, store cursorStore, p cursorPayload) (string, error) {
 	data, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -87,14 +83,14 @@ func encodeCursor(key []byte, store cursorStore, p cursorPayload) (string, error
 		return "", err
 	}
 	h := base64.RawURLEncoding.EncodeToString(handle[:])
-	store.set(h, p)
+	store.set(ctx, h, p)
 	return cursorHandlePrefix + h, nil
 }
 
-func decodeCursor(key []byte, store cursorStore, s string) (cursorPayload, error) {
+func decodeCursor(ctx context.Context, key []byte, store cursorStore, s string) (cursorPayload, error) {
 	if strings.HasPrefix(s, cursorHandlePrefix) {
 		handle := s[len(cursorHandlePrefix):]
-		p, ok := store.get(handle)
+		p, ok := store.get(ctx, handle)
 		if !ok {
 			return cursorPayload{}, fmt.Errorf("%w: handle expired", domain.ErrInvalidCursor)
 		}
