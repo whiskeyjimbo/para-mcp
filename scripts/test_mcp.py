@@ -12,6 +12,8 @@ Usage:
 import argparse
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -64,10 +66,33 @@ def _flush_section():
     _section_fail = 0
 
 
+def find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+def wait_for_port(host: str, port: int, timeout: float = 10.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, OSError):
+            time.sleep(0.1)
+    return False
+
+
 class MCPClient:
-    def __init__(self, binary: str, vault: str):
+    def __init__(self, binary: str, vault: str = "", config: str = ""):
+        args = [binary]
+        if config:
+            args += ["--config", config]
+        elif vault:
+            args += ["--vault", vault]
         self.proc = subprocess.Popen(
-            [binary, "--vault", vault],
+            args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -936,6 +961,173 @@ def run_phase2_tests(c: MCPClient, vault_dir: str):
         check("status=paused (explicit wins over template)", data and data.get("Status") == "paused", str(data))
 
 
+def run_federation_tests(binary: str):
+    """
+    Starts a remote paras HTTP server (team scope), builds a gateway config,
+    starts the gateway in stdio mode, and verifies federated reads.
+    """
+    remote_vault = tempfile.mkdtemp(prefix="paras-remote-")
+    config_path = None
+    remote_proc = None
+    gw = None
+
+    try:
+        # --- Populate remote vault directly on disk ---
+        for cat in ("projects", "resources"):
+            os.makedirs(os.path.join(remote_vault, cat), exist_ok=True)
+
+        # 5 team notes for pagination tests
+        for i in range(5):
+            with open(os.path.join(remote_vault, "projects", f"team-proj-{i}.md"), "w") as f:
+                f.write(
+                    f"---\ntitle: Team Project {i}\ntags:\n  - team\nstatus: active\n"
+                    f"---\nTeam project {i} distributed_systems_xq9.\n"
+                )
+        with open(os.path.join(remote_vault, "resources", "team-guide.md"), "w") as f:
+            f.write("---\ntitle: Team Engineering Guide\ntags:\n  - engineering\n---\nEngineering documentation.\n")
+
+        # Populate local vault
+        local_vault = tempfile.mkdtemp(prefix="paras-local-fed-")
+        try:
+            os.makedirs(os.path.join(local_vault, "projects"), exist_ok=True)
+            for i in range(3):
+                with open(os.path.join(local_vault, "projects", f"personal-proj-{i}.md"), "w") as f:
+                    f.write(
+                        f"---\ntitle: Personal Project {i}\ntags:\n  - personal\n"
+                        f"---\nPersonal project {i}.\n"
+                    )
+
+            # --- Start remote HTTP server ---
+            port = find_free_port()
+            remote_proc = subprocess.Popen(
+                [binary, "--vault", remote_vault, "--scope", "team", "--addr", f":{port}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            section("federation/setup")
+            if not wait_for_port("localhost", port):
+                check("remote server started", False, f"timed out on port {port}")
+                return
+            check("remote server started", True)
+
+            # --- Write gateway config ---
+            fd, config_path = tempfile.mkstemp(suffix=".yaml")
+            with os.fdopen(fd, "w") as f:
+                f.write(
+                    f"local:\n  vault: {local_vault}\n  scope: personal\n"
+                    f"remotes:\n  - scope: team\n    url: http://localhost:{port}/mcp\n"
+                )
+
+            # --- Start gateway (connects to remote synchronously during startup) ---
+            gw = MCPClient(binary, config=config_path)
+            gw.initialize()
+
+            # --- vault_list_scopes ---
+            section("federation/vault_list_scopes")
+            resp = gw.call("vault_list_scopes", {})
+            is_err, text = check_ok("lists both scopes", resp)
+            if not is_err:
+                scopes_data = parse_json(text) or []
+                scope_ids = [s.get("scope") for s in scopes_data]
+                check("personal scope present", "personal" in scope_ids, str(scope_ids))
+                check("team scope present", "team" in scope_ids, str(scope_ids))
+
+            # --- federated notes_list ---
+            section("federation/notes_list")
+            resp = gw.call("notes_list", {"limit": 100})
+            is_err, text = check_ok("returns notes from both scopes", resp)
+            if not is_err:
+                data = parse_json(text) or {}
+                notes = data.get("Notes", [])
+                scopes_seen = {n.get("Ref", {}).get("Scope") for n in notes}
+                check("personal notes included", "personal" in scopes_seen, str(scopes_seen))
+                check("team notes included", "team" in scopes_seen, str(scopes_seen))
+                check("ScopesSucceeded has both",
+                      set(data.get("ScopesSucceeded") or []) == {"personal", "team"},
+                      str(data.get("ScopesSucceeded")))
+
+            # --- cursor pagination across scopes ---
+            resp1 = gw.call("notes_list", {"limit": 2, "sort": "title"})
+            is_err1, text1 = check_ok("cursor pagination page 1", resp1)
+            if not is_err1:
+                d1 = parse_json(text1) or {}
+                check("HasMore=true", d1.get("HasMore") is True, str(d1))
+                cursor = d1.get("NextCursor", "")
+                check("NextCursor is set", bool(cursor), str(d1))
+                if cursor:
+                    resp2 = gw.call("notes_list", {"limit": 2, "sort": "title", "cursor": cursor})
+                    is_err2, text2 = check_ok("cursor pagination page 2", resp2)
+                    if not is_err2:
+                        d2 = parse_json(text2) or {}
+                        p1 = {n.get("Ref", {}).get("Path") for n in d1.get("Notes", [])}
+                        p2 = {n.get("Ref", {}).get("Path") for n in d2.get("Notes", [])}
+                        check("page 2 has no overlap with page 1", not (p1 & p2),
+                              f"overlap: {p1 & p2}")
+
+            # offset cap
+            resp = gw.call("notes_list", {"offset": 501})
+            check_err("offset > 500 → error", resp, "500")
+
+            # expired / malformed cursor
+            resp = gw.call("notes_list", {"cursor": "notvalidbase64!!"})
+            check_err("malformed cursor → invalid_argument", resp, "invalid_argument")
+
+            # --- federated notes_search ---
+            section("federation/notes_search")
+            time.sleep(0.3)  # let both vaults build their BM25 index
+            resp = gw.call("notes_search", {"text": "distributed_systems_xq9", "limit": 10})
+            is_err, text = check_ok("federated search finds remote term", resp)
+            if not is_err:
+                results = parse_json(text) or []
+                team_hits = [r for r in results
+                             if r.get("Summary", {}).get("Ref", {}).get("Scope") == "team"]
+                check("team notes appear in search results", len(team_hits) > 0, str(results))
+
+            # --- partial failure: stop remote, re-query ---
+            section("federation/partial_failure")
+            remote_proc.terminate()
+            try:
+                remote_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                remote_proc.kill()
+                remote_proc.wait(timeout=3)
+            remote_proc = None
+            time.sleep(0.2)  # let connections drain
+
+            resp = gw.call("notes_list", {"limit": 50})
+            is_err, text = check_ok("partial failure returns personal notes", resp)
+            if not is_err:
+                data = parse_json(text) or {}
+                notes = data.get("Notes", [])
+                scopes_returned = {n.get("Ref", {}).get("Scope") for n in notes}
+                check("personal notes still returned", "personal" in scopes_returned, str(scopes_returned))
+                check("team notes absent", "team" not in scopes_returned, str(scopes_returned))
+                pf = data.get("PartialFailure")
+                check("PartialFailure is non-null", pf is not None, str(data))
+                if pf:
+                    check("team in FailedScopes",
+                          "team" in (pf.get("FailedScopes") or []), str(pf))
+                    check("WarningText is non-empty", bool(pf.get("WarningText")), str(pf))
+
+        finally:
+            shutil.rmtree(local_vault, ignore_errors=True)
+
+    finally:
+        if gw:
+            gw.close()
+        if remote_proc:
+            remote_proc.terminate()
+            try:
+                remote_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                remote_proc.kill()
+                remote_proc.wait(timeout=3)
+        if config_path and os.path.exists(config_path):
+            os.unlink(config_path)
+        shutil.rmtree(remote_vault, ignore_errors=True)
+
+
 def main():
     global verbose
 
@@ -962,24 +1154,29 @@ def main():
             sys.exit(1)
         print("Build OK\n")
 
-    with tempfile.TemporaryDirectory(prefix="paras-test-") as vault:
-        c = MCPClient(binary, vault)
-        try:
-            print("Initializing MCP session...")
-            init_resp = c.initialize()
-            server_info = init_resp.get("result", {}).get("serverInfo", {})
-            print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}")
+    try:
+        with tempfile.TemporaryDirectory(prefix="paras-test-") as vault:
+            c = MCPClient(binary, vault=vault)
+            try:
+                print("Initializing MCP session...")
+                init_resp = c.initialize()
+                server_info = init_resp.get("result", {}).get("serverInfo", {})
+                print(f"Connected to {server_info.get('name', '?')} {server_info.get('version', '?')}")
 
-            run_tests(c)
-            run_phase2_tests(c, vault)
+                run_tests(c)
+                run_phase2_tests(c, vault)
 
-        finally:
-            c.close()
-            if not args.binary:
-                try:
-                    os.unlink(binary)
-                except FileNotFoundError:
-                    pass
+            finally:
+                c.close()
+
+        run_federation_tests(binary)
+
+    finally:
+        if not args.binary:
+            try:
+                os.unlink(binary)
+            except FileNotFoundError:
+                pass
 
     _flush_section()
     print()

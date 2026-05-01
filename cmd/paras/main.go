@@ -45,10 +45,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	var svc ports.NoteService
+	var (
+		svc    ports.NoteService
+		scopes []domain.ScopeID
+	)
 
 	if *configFile != "" {
-		svc = mustBuildFederated(ctx, *configFile)
+		svc, scopes = mustBuildFederated(ctx, *configFile)
 	} else {
 		if *vaultRoot == "" {
 			fmt.Fprintln(os.Stderr, "error: --vault or --config is required")
@@ -67,9 +70,12 @@ func main() {
 		}
 		defer v.Close()
 		svc = application.NewService(v)
+		scopes = []domain.ScopeID{scope}
 	}
 
-	s := mcplayer.Build(svc)
+	s := mcplayer.Build(svc, mcplayer.WithScopesFunc(func(_ context.Context) []domain.ScopeID {
+		return scopes
+	}))
 
 	if *addr != "" {
 		httpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
@@ -88,7 +94,9 @@ func main() {
 	}
 }
 
-func mustBuildFederated(ctx context.Context, cfgPath string) ports.NoteService {
+// mustBuildFederated loads the config, wires the VaultRegistry and FederationService,
+// and returns the service plus the full list of registered scope IDs (for the scope resolver).
+func mustBuildFederated(ctx context.Context, cfgPath string) (ports.NoteService, []domain.ScopeID) {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		slog.Error("failed to read config", "path", cfgPath, "err", err)
@@ -153,5 +161,10 @@ func mustBuildFederated(ctx context.Context, cfgPath string) ports.NoteService {
 		slog.Error("failed to create federation service", "err", err)
 		os.Exit(1)
 	}
-	return fed
+
+	allScopes := make([]domain.ScopeID, 0, len(reg.Entries()))
+	for _, e := range reg.Entries() {
+		allScopes = append(allScopes, e.ScopeID)
+	}
+	return fed, allScopes
 }
