@@ -3,12 +3,14 @@ package application
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/tombstone"
 )
 
 // stubVault is a minimal ports.Vault for federation tests.
@@ -520,10 +522,27 @@ func TestFederation_Promote_CrossScope(t *testing.T) {
 		t.Errorf("destination body = %q, want %q", dest.Body, src.Body)
 	}
 
-	// Source should be archived (keep_source=false) not deleted.
+	// Destination must have a fresh NoteID (not the same as source, and non-empty).
+	destNoteID := domain.GetNoteID(dest.FrontMatter)
+	if destNoteID == "" {
+		t.Error("promoted note should have a new NoteID; got empty")
+	}
+	srcNoteID := domain.GetNoteID(src.FrontMatter)
+	if srcNoteID != "" && srcNoteID == destNoteID {
+		t.Errorf("promoted note has same NoteID as source (%q); expected fresh ID", destNoteID)
+	}
+
+	// Source should be archived (keep_source=false): original path is gone.
 	_, err = fed.Get(ctx, domain.NoteRef{Scope: "personal", Path: "projects/my-note.md"})
-	if err == nil {
-		t.Log("source still accessible (expected: archived to archives/)")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("source should be archived (not found at original path) after promote; got err=%v", err)
+	}
+	// Verify it moved to archives/.
+	archived, err := fed.Get(ctx, domain.NoteRef{Scope: "personal", Path: "archives/my-note.md"})
+	if err != nil {
+		t.Errorf("source should be accessible at archives/my-note.md after promote; got err=%v", err)
+	} else if archived.Body != src.Body {
+		t.Errorf("archived source body = %q, want %q", archived.Body, src.Body)
 	}
 
 	// Verify note appears in federated query.
@@ -633,8 +652,10 @@ func TestFederation_Promote_StaleETag_Conflict(t *testing.T) {
 	}
 }
 
-// TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry is the 3-vault round-trip test.
-// personal -> team -> personal under concurrent edits; conflict surfaces cleanly; re-read+retry succeeds.
+// TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry exercises the full round-trip:
+// personal → team (with conflict+retry), then team → personal (with conflict+retry on return leg).
+// This validates idempotency: the return promote with the same idempotency_key returns the
+// cached result instead of creating a duplicate.
 func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 	v1, err := localvault.New("personal", t.TempDir())
 	if err != nil {
@@ -644,11 +665,7 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("localvault team: %v", err)
 	}
-	v3, err := localvault.New("archive", t.TempDir())
-	if err != nil {
-		t.Fatalf("localvault archive: %v", err)
-	}
-	t.Cleanup(func() { _ = v1.Close(); _ = v2.Close(); _ = v3.Close() })
+	t.Cleanup(func() { _ = v1.Close(); _ = v2.Close() })
 
 	reg := NewRegistry()
 	if err := reg.AddVault(v1, ""); err != nil {
@@ -657,15 +674,14 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 	if err := reg.AddVault(v2, ""); err != nil {
 		t.Fatalf("add team: %v", err)
 	}
-	if err := reg.AddVault(v3, ""); err != nil {
-		t.Fatalf("add archive: %v", err)
-	}
 	fed, err := NewFederationService(reg)
 	if err != nil {
 		t.Fatalf("NewFederationService: %v", err)
 	}
 
 	ctx := context.Background()
+
+	// --- Leg 1: personal → team ---
 
 	// Step 1: Create note in personal.
 	res, err := fed.Create(ctx, domain.CreateInput{Path: "projects/shared.md", Body: "v1"})
@@ -674,7 +690,7 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 	}
 	etag1 := res.ETag
 
-	// Step 2: Concurrent edit — another writer updates personal before we can promote.
+	// Step 2: Concurrent edit on personal before promote.
 	res2, err := fed.UpdateBody(ctx, domain.NoteRef{Scope: "personal", Path: "projects/shared.md"}, "concurrent edit", etag1)
 	if err != nil {
 		t.Fatalf("concurrent UpdateBody: %v", err)
@@ -692,7 +708,7 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 		t.Fatalf("expected conflict on stale ETag, got %v", err)
 	}
 
-	// Step 4: Re-read to get fresh ETag, then retry.
+	// Step 4: Re-read personal to get fresh ETag and retry.
 	note, err := fed.Get(ctx, domain.NoteRef{Scope: "personal", Path: "projects/shared.md"})
 	if err != nil {
 		t.Fatalf("re-read after conflict: %v", err)
@@ -701,7 +717,7 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 		t.Errorf("re-read ETag = %q, want %q", note.ETag, etag2)
 	}
 
-	// Step 5: Retry with fresh ETag — succeeds.
+	// Step 5: Retry with fresh ETag — personal → team succeeds.
 	teamRes, err := fed.Promote(ctx, domain.PromoteInput{
 		Ref:        domain.NoteRef{Scope: "personal", Path: "projects/shared.md"},
 		ToScope:    "team",
@@ -709,33 +725,213 @@ func TestFederation_3Vault_ConcurrentEdit_ConflictAndRetry(t *testing.T) {
 		KeepSource: true,
 	})
 	if err != nil {
-		t.Fatalf("retry promote with fresh ETag: %v", err)
+		t.Fatalf("retry promote personal → team: %v", err)
 	}
 	if teamRes.Summary.Ref.Scope != "team" {
 		t.Errorf("result scope = %q, want team", teamRes.Summary.Ref.Scope)
 	}
 
-	// Step 6: Promote team note to archive scope.
+	// --- Leg 2: team → personal (return trip) ---
+
+	// Step 6: Concurrent edit on team note before return promote.
 	teamNote, err := fed.Get(ctx, domain.NoteRef{Scope: "team", Path: "projects/shared.md"})
 	if err != nil {
 		t.Fatalf("Get team note: %v", err)
 	}
+	teamETag1 := teamNote.ETag
+
+	teamEntry, _ := fed.reg.EntryFor("team")
+	teamRes2, err := teamEntry.svc.UpdateBody(ctx, domain.NoteRef{Scope: "team", Path: "projects/shared.md"}, "team edited", teamETag1)
+	if err != nil {
+		t.Fatalf("concurrent UpdateBody on team: %v", err)
+	}
+	teamETag2 := teamRes2.ETag
+
+	// Step 7: Promote team → personal with stale ETag — must conflict.
 	_, err = fed.Promote(ctx, domain.PromoteInput{
 		Ref:        domain.NoteRef{Scope: "team", Path: "projects/shared.md"},
-		ToScope:    "archive",
-		IfMatch:    teamNote.ETag,
-		KeepSource: false,
+		ToScope:    "personal",
+		IfMatch:    teamETag1, // stale
+		OnConflict: "overwrite",
+		KeepSource: true,
 	})
-	if err != nil {
-		t.Fatalf("promote team -> archive: %v", err)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("expected conflict on stale team ETag, got %v", err)
 	}
 
-	// Verify archive note exists.
-	archNote, err := fed.Get(ctx, domain.NoteRef{Scope: "archive", Path: "projects/shared.md"})
+	// Step 8: Re-read team, retry with idempotency key.
+	const idemKey = "promote-team-personal-shared"
+	teamNote2, err := fed.Get(ctx, domain.NoteRef{Scope: "team", Path: "projects/shared.md"})
 	if err != nil {
-		t.Fatalf("Get archive note: %v", err)
+		t.Fatalf("re-read team after conflict: %v", err)
 	}
-	if archNote.Body != "concurrent edit" {
-		t.Errorf("archive body = %q, want %q", archNote.Body, "concurrent edit")
+	if teamNote2.ETag != teamETag2 {
+		t.Errorf("re-read team ETag = %q, want %q", teamNote2.ETag, teamETag2)
+	}
+
+	returnRes, err := fed.Promote(ctx, domain.PromoteInput{
+		Ref:            domain.NoteRef{Scope: "team", Path: "projects/shared.md"},
+		ToScope:        "personal",
+		IfMatch:        teamETag2,
+		OnConflict:     "overwrite",
+		KeepSource:     true,
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		t.Fatalf("promote team → personal: %v", err)
+	}
+	if returnRes.Summary.Ref.Scope != "personal" {
+		t.Errorf("return result scope = %q, want personal", returnRes.Summary.Ref.Scope)
+	}
+
+	// Step 9: Simulate lost response — retry with same idempotency key must return same result.
+	retryRes, err := fed.Promote(ctx, domain.PromoteInput{
+		Ref:            domain.NoteRef{Scope: "team", Path: "projects/shared.md"},
+		ToScope:        "personal",
+		IfMatch:        teamETag2,
+		OnConflict:     "overwrite",
+		KeepSource:     true,
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		t.Fatalf("idempotency retry: %v", err)
+	}
+	if retryRes.Summary.Ref.Path != returnRes.Summary.Ref.Path {
+		t.Errorf("idempotency retry returned different path: %q vs %q", retryRes.Summary.Ref.Path, returnRes.Summary.Ref.Path)
+	}
+
+	// Verify personal has the team-edited body.
+	personal, err := fed.Get(ctx, domain.NoteRef{Scope: "personal", Path: "projects/shared.md"})
+	if err != nil {
+		t.Fatalf("Get personal after return promote: %v", err)
+	}
+	if personal.Body != "team edited" {
+		t.Errorf("personal body after return promote = %q, want %q", personal.Body, "team edited")
+	}
+}
+
+// TestFederation_Tombstone_RestartSurvival verifies that file-backed tombstones
+// persist across gateway restarts so deleted notes do not reappear after restart.
+func TestFederation_Tombstone_RestartSurvival(t *testing.T) {
+	dir := t.TempDir()
+	tsPath := filepath.Join(dir, "tombstones.json")
+	vaultDir := t.TempDir()
+
+	// --- Pre-restart federation ---
+	v1, err := localvault.New("personal", vaultDir)
+	if err != nil {
+		t.Fatalf("localvault: %v", err)
+	}
+	ts1, err := tombstone.New(tsPath)
+	if err != nil {
+		t.Fatalf("tombstone.New: %v", err)
+	}
+	reg1 := NewRegistry()
+	if err := reg1.AddVault(v1, ""); err != nil {
+		t.Fatalf("add vault: %v", err)
+	}
+	fed1, err := NewFederationService(reg1, WithTombstoneStore(ts1))
+	if err != nil {
+		t.Fatalf("NewFederationService: %v", err)
+	}
+
+	ctx := context.Background()
+
+	if _, err := fed1.Create(ctx, domain.CreateInput{Path: "projects/doomed.md", Body: "soon gone"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := fed1.Delete(ctx, domain.NoteRef{Scope: "personal", Path: "projects/doomed.md"}, false, ""); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	_ = v1.Close()
+
+	// --- Simulated restart: new FileStore loads the same tombstone file ---
+	v2, err := localvault.New("personal", vaultDir)
+	if err != nil {
+		t.Fatalf("localvault (restart): %v", err)
+	}
+	t.Cleanup(func() { _ = v2.Close() })
+
+	ts2, err := tombstone.New(tsPath)
+	if err != nil {
+		t.Fatalf("tombstone.New (restart): %v", err)
+	}
+	if !ts2.Contains(domain.NoteRef{Scope: "personal", Path: "projects/doomed.md"}) {
+		t.Fatal("tombstone not present after reload from file — restart survival failed")
+	}
+
+	reg2 := NewRegistry()
+	if err := reg2.AddVault(v2, ""); err != nil {
+		t.Fatalf("add vault (restart): %v", err)
+	}
+	fed2, err := NewFederationService(reg2, WithTombstoneStore(ts2))
+	if err != nil {
+		t.Fatalf("NewFederationService (restart): %v", err)
+	}
+
+	res, err := fed2.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryAllowedScopes([]domain.ScopeID{"personal"}),
+		domain.WithQueryPagination(10, 0),
+	))
+	if err != nil {
+		t.Fatalf("Query after restart: %v", err)
+	}
+	for _, n := range res.Notes {
+		if n.Ref.Path == "projects/doomed.md" {
+			t.Error("deleted note reappeared in query after simulated restart")
+		}
+	}
+}
+
+// TestFederation_Promote_Idempotency verifies that a second promote call with the
+// same idempotency_key returns the cached result without executing the operation again.
+func TestFederation_Promote_Idempotency(t *testing.T) {
+	fed, _ := newFedLocalVaults(t)
+	ctx := context.Background()
+
+	if _, err := fed.Create(ctx, domain.CreateInput{Path: "projects/idem.md", Body: "idempotent"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const key = "promote-idem-key-001"
+	in := domain.PromoteInput{
+		Ref:            domain.NoteRef{Scope: "personal", Path: "projects/idem.md"},
+		ToScope:        "team",
+		KeepSource:     true,
+		IdempotencyKey: key,
+	}
+
+	// First call: executes the promote.
+	res1, err := fed.Promote(ctx, in)
+	if err != nil {
+		t.Fatalf("first Promote: %v", err)
+	}
+
+	// Second call with same key: should return cached result (not create a duplicate).
+	res2, err := fed.Promote(ctx, in)
+	if err != nil {
+		t.Fatalf("second Promote (idempotency): %v", err)
+	}
+	if res2.Summary.Ref.Path != res1.Summary.Ref.Path || res2.ETag != res1.ETag {
+		t.Errorf("idempotency: second call returned different result: %+v vs %+v", res2, res1)
+	}
+
+	// Verify the team scope has exactly one note at this path (not two).
+	teamEntry, _ := fed.reg.EntryFor("team")
+	teamRes, err := teamEntry.svc.Query(ctx, domain.NewQueryRequest(
+		domain.WithQueryAllowedScopes([]domain.ScopeID{"team"}),
+		domain.WithQueryPagination(50, 0),
+	))
+	if err != nil {
+		t.Fatalf("Query team: %v", err)
+	}
+	count := 0
+	for _, n := range teamRes.Notes {
+		if n.Ref.Path == "projects/idem.md" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 note at projects/idem.md in team scope, found %d", count)
 	}
 }

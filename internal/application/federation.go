@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
@@ -22,16 +23,26 @@ type TombstoneStore interface {
 	Contains(ref domain.NoteRef) bool
 }
 
+// idempotencyEntry caches a completed promote result for a given key.
+type idempotencyEntry struct {
+	result domain.MutationResult
+	expiry time.Time
+}
+
+const idempotencyTTL = 24 * time.Hour
+
 // FederationService implements ports.NoteService by fan-out across all
 // registered vaults. Single-vault operations (Get, Create, etc.) route
 // to the entry matching the request's scope; the primary (local) vault
 // is used when no scope is specified.
 type FederationService struct {
-	reg         *VaultRegistry
-	cursorKey   []byte
-	cursorStore cursorStore
-	tombstones  TombstoneStore
-	idMinter    func() string
+	reg              *VaultRegistry
+	cursorKey        []byte
+	cursorStore      cursorStore
+	tombstones       TombstoneStore
+	idMinter         func() string
+	idempotencyMu    sync.Mutex
+	idempotencyCache map[string]idempotencyEntry
 }
 
 // NewFederationService creates a FederationService backed by reg.
@@ -61,11 +72,12 @@ func WithFederationIDMinter(fn func() string) FederationOption {
 // NewFederationServiceWithKey creates a FederationService with an explicit HMAC key.
 func NewFederationServiceWithKey(reg *VaultRegistry, key []byte, opts ...FederationOption) *FederationService {
 	f := &FederationService{
-		reg:         reg,
-		cursorKey:   key,
-		cursorStore: newInMemoryCursorStore(),
-		tombstones:  newInMemoryTombstoneStore(),
-		idMinter:    defaultFederationIDMinter,
+		reg:              reg,
+		cursorKey:        key,
+		cursorStore:      newInMemoryCursorStore(),
+		tombstones:       newInMemoryTombstoneStore(),
+		idMinter:         defaultFederationIDMinter,
+		idempotencyCache: make(map[string]idempotencyEntry),
 	}
 	for _, o := range opts {
 		o(f)
@@ -419,6 +431,12 @@ func (f *FederationService) Delete(ctx context.Context, ref domain.NoteRef, soft
 }
 
 func (f *FederationService) Promote(ctx context.Context, in domain.PromoteInput) (domain.MutationResult, error) {
+	if in.IdempotencyKey != "" {
+		if cached, ok := f.lookupIdempotency(in.IdempotencyKey); ok {
+			return cached, nil
+		}
+	}
+
 	srcEntry, err := f.entryForRef(in.Ref)
 	if err != nil {
 		return domain.MutationResult{}, err
@@ -463,6 +481,10 @@ func (f *FederationService) Promote(ctx context.Context, in domain.PromoteInput)
 		if aerr == nil {
 			_, _ = srcEntry.svc.Move(ctx, in.Ref, archPath, src.ETag)
 		}
+	}
+
+	if in.IdempotencyKey != "" {
+		f.storeIdempotency(in.IdempotencyKey, res)
 	}
 	return res, nil
 }
@@ -584,6 +606,26 @@ func (s *inMemoryTombstoneStore) Contains(ref domain.NoteRef) bool {
 }
 
 // --- Helpers ---
+
+func (f *FederationService) lookupIdempotency(key string) (domain.MutationResult, bool) {
+	f.idempotencyMu.Lock()
+	defer f.idempotencyMu.Unlock()
+	e, ok := f.idempotencyCache[key]
+	if !ok {
+		return domain.MutationResult{}, false
+	}
+	if time.Now().After(e.expiry) {
+		delete(f.idempotencyCache, key)
+		return domain.MutationResult{}, false
+	}
+	return e.result, true
+}
+
+func (f *FederationService) storeIdempotency(key string, result domain.MutationResult) {
+	f.idempotencyMu.Lock()
+	f.idempotencyCache[key] = idempotencyEntry{result: result, expiry: time.Now().Add(idempotencyTTL)}
+	f.idempotencyMu.Unlock()
+}
 
 func defaultFederationIDMinter() string {
 	return defaultIDMinter()
