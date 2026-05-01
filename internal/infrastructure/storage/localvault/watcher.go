@@ -37,16 +37,19 @@ type VaultIndexer interface {
 }
 
 type watcher struct {
-	v                VaultIndexer
-	root             string
-	log              *slog.Logger
-	fw               *fsnotify.Watcher
-	ticker           *time.Ticker
-	done             chan struct{}
-	wg               sync.WaitGroup
-	syncConflicts    atomic.Int64
-	watcherStatus    atomic.Value
-	rescanActive     atomic.Bool
+	v             VaultIndexer
+	root          string
+	log           *slog.Logger
+	fw            *fsnotify.Watcher
+	ticker        *time.Ticker
+	done          chan struct{}
+	wg            sync.WaitGroup
+	syncConflicts atomic.Int64
+	watcherStatus atomic.Value
+	rescanActive  atomic.Bool
+	// dirty is set when fsnotify errors or missed events are suspected; the
+	// periodic rescan is skipped when false (watcher is healthy).
+	dirty            atomic.Bool
 	conflicts        *ConflictDetector
 	rescanInterval   time.Duration
 	renamePairWindow time.Duration
@@ -129,6 +132,11 @@ func (w *watcher) loop() {
 		case <-w.done:
 			return
 		case <-w.ticker.C:
+			// Skip rescan when the fsnotify watcher is healthy and no events
+			// have been missed. dirty is set on fsnotify errors or suspected misses.
+			if !w.dirty.CompareAndSwap(true, false) {
+				continue
+			}
 			if w.rescanActive.CompareAndSwap(false, true) {
 				go func() {
 					defer w.rescanActive.Store(false)
@@ -145,6 +153,7 @@ func (w *watcher) loop() {
 				return
 			}
 			w.log.Warn("fsnotify error", "err", err)
+			w.dirty.Store(true)
 		}
 	}
 }
@@ -192,6 +201,9 @@ func (w *watcher) handleEvent(event fsnotify.Event) {
 		w.reindexFile(name)
 
 	case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
+		// Rename/remove events may indicate the watcher missed subsequent events
+		// (e.g., rapid create after rename). Mark dirty to trigger a safety rescan.
+		w.dirty.Store(true)
 		if !w.renames.MarkRemoved(name) {
 			time.AfterFunc(w.renamePairWindow, func() {
 				select {
