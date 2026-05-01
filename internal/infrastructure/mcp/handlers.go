@@ -153,6 +153,34 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 	return jsonResult(flatMutation(res))
 }
 
+func (h *handlers) noteReplace(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	if denied := h.requireRole(ctx, ref.Scope, rbac.Contributor); denied != nil {
+		return denied, nil
+	}
+	body, err := req.RequireString("body")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
+	raw, ok := req.GetArguments()["fields"]
+	if !ok {
+		return mcplib.NewToolResultError("fields required"), nil
+	}
+	fields, ok := raw.(map[string]any)
+	if !ok {
+		return mcplib.NewToolResultError("fields must be an object"), nil
+	}
+	res, err := h.svc.Replace(ctx, ref, fields, body, req.GetString("if_match", ""))
+	if err != nil {
+		return toolErr(ctx, err), nil
+	}
+	h.publishChange("note_changed", ref)
+	return jsonResult(flatMutation(res))
+}
+
 func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	ref, errResult := requireNoteRef(req)
 	if errResult != nil {

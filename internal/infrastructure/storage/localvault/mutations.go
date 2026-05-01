@@ -120,6 +120,40 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 	return result, err
 }
 
+func (v *LocalVault) Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	np, err := v.normalizePath(path)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	var result domain.MutationResult
+	err = v.actors.Do(ctx, v.scope, np.Storage, func() error {
+		note, err := v.readNote(np.Storage)
+		if err != nil {
+			return err
+		}
+		if ifMatch != "" && note.ETag != ifMatch {
+			return domain.ErrConflict
+		}
+		domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
+		note.FrontMatter.UpdatedAt = v.clock().UTC()
+		note.Body = body
+		note.ETag = domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(note.FrontMatter), body)
+		data, err := noteutil.FormatNote(note.FrontMatter, body)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(v.root, np.Storage), data, 0o644); err != nil {
+			return err
+		}
+		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
+		links := noteutil.ParseLinks(body)
+		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
+		v.idx.Add(noteutil.SummaryToDoc(result.Summary, body))
+		return nil
+	})
+	return result, err
+}
+
 func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := v.normalizePath(path)
 	if err != nil {

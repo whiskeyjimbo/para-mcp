@@ -243,6 +243,25 @@ func (v *RemoteVault) PatchFrontMatter(ctx context.Context, path string, fields 
 	return res, nil
 }
 
+func (v *RemoteVault) Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	args := map[string]any{
+		"scope":    v.canonicalRemote,
+		"path":     path,
+		"fields":   fields,
+		"body":     body,
+		"if_match": ifMatch,
+	}
+	var raw remoteMutation
+	if err := v.conn.call(ctx, "note_replace", args, &raw); err != nil {
+		return domain.MutationResult{}, translateErr(err)
+	}
+	res := raw.toDomain()
+	res.Summary.Ref.Scope = v.localScope
+	v.bodies.invalidate(path)
+	v.summaries.invalidate()
+	return res, nil
+}
+
 func (v *RemoteVault) Move(ctx context.Context, path, newPath, ifMatch string) (domain.MutationResult, error) {
 	args := map[string]any{
 		"scope":    v.canonicalRemote,

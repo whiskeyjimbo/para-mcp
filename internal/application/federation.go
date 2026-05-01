@@ -412,6 +412,14 @@ func (f *FederationService) PatchFrontMatter(ctx context.Context, ref domain.Not
 	return e.svc.PatchFrontMatter(ctx, ref, fields, ifMatch)
 }
 
+func (f *FederationService) Replace(ctx context.Context, ref domain.NoteRef, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	e, err := f.entryForRef(ref)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	return e.svc.Replace(ctx, ref, fields, body, ifMatch)
+}
+
 func (f *FederationService) Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error) {
 	e, err := f.entryForRef(ref)
 	if err != nil {
@@ -470,16 +478,9 @@ func (f *FederationService) Promote(ctx context.Context, in domain.PromoteInput)
 		if !isConflict(cerr) || in.OnConflict != domain.ConflictOverwrite {
 			return domain.MutationResult{}, cerr
 		}
-		existing, gerr := destEntry.svc.Get(ctx, destRef)
-		if gerr != nil {
-			return domain.MutationResult{}, gerr
-		}
-		res, err = destEntry.svc.UpdateBody(ctx, destRef, src.Body, existing.ETag)
+		res, err = destEntry.svc.Replace(ctx, destRef, frontMatterFields(src.FrontMatter), src.Body, "")
 		if err != nil {
 			return domain.MutationResult{}, err
-		}
-		if _, perr := destEntry.svc.PatchFrontMatter(ctx, destRef, frontMatterFields(src.FrontMatter), res.ETag); perr != nil {
-			return domain.MutationResult{}, perr
 		}
 	}
 

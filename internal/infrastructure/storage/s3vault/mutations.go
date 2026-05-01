@@ -154,6 +154,57 @@ func (v *S3Vault) PatchFrontMatter(ctx context.Context, path string, fields map[
 	return result, nil
 }
 
+func (v *S3Vault) Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	np, err := domain.Normalize(path, false)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+
+	note, err := v.getObject(ctx, np.Storage)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	if ifMatch != "" && note.ETag != ifMatch {
+		return domain.MutationResult{}, domain.ErrConflict
+	}
+
+	domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
+	note.FrontMatter.UpdatedAt = v.clock()
+	note.Body = body
+	etag := domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(note.FrontMatter), body)
+
+	data, err := noteutil.FormatNote(note.FrontMatter, body)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+
+	matchETag := ifMatch
+	if matchETag == "" {
+		matchETag = note.ETag
+	}
+	_, err = v.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:  aws.String(v.bucket),
+		Key:     aws.String(v.objectKey(np.Storage)),
+		Body:    bytes.NewReader(data),
+		IfMatch: aws.String(matchETag),
+	})
+	if err != nil {
+		if isPreconditionFailed(err) {
+			return domain.MutationResult{}, domain.ErrConflict
+		}
+		return domain.MutationResult{}, err
+	}
+
+	note.ETag = etag
+	result := domain.MutationResult{Summary: note.Summary(), ETag: etag}
+	ik := noteutil.IndexKey(np.Storage, false)
+	links := noteutil.ParseLinks(body)
+	v.cache.Set(ik, result.Summary)
+	v.graph.Upsert(np.Storage, links)
+	v.idx.Add(noteutil.SummaryToDoc(result.Summary, body))
+	return result, nil
+}
+
 func (v *S3Vault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := domain.Normalize(path, false)
 	if err != nil {

@@ -121,6 +121,14 @@ func (s *NoteService) PatchFrontMatter(ctx context.Context, ref domain.NoteRef, 
 	return s.vault.PatchFrontMatter(ctx, np.Storage, fields, ifMatch)
 }
 
+func (s *NoteService) Replace(ctx context.Context, ref domain.NoteRef, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	np, err := s.normalizeRef(ref)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	return s.vault.Replace(ctx, np.Storage, fields, body, ifMatch)
+}
+
 func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {

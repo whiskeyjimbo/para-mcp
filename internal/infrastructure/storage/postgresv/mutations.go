@@ -196,6 +196,70 @@ func (v *PostgresVault) PatchFrontMatter(ctx context.Context, path string, field
 	return result, nil
 }
 
+func (v *PostgresVault) Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	np, err := domain.Normalize(path, false)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+
+	tx, err := v.pool.Begin(ctx)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var r noteRow
+	err = tx.QueryRow(ctx,
+		`SELECT scope, path, body, etag, created_at, updated_at,
+		        title, tags, status, area, project
+		 FROM notes WHERE scope=$1 AND path=$2 AND deleted_at IS NULL FOR UPDATE`,
+		v.scope, np.Storage,
+	).Scan(&r.scope, &r.path, &r.body, &r.etag,
+		&r.createdAt, &r.updatedAt,
+		&r.title, &r.tags, &r.status, &r.area, &r.project,
+	)
+	if err != nil {
+		if isNoRows(err) {
+			return domain.MutationResult{}, domain.ErrNotFound
+		}
+		return domain.MutationResult{}, err
+	}
+	if ifMatch != "" && r.etag != ifMatch {
+		return domain.MutationResult{}, domain.ErrConflict
+	}
+
+	now := v.clock()
+	note := r.toNote(false)
+	domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
+	note.FrontMatter.UpdatedAt = now
+	note.Body = body
+	etag := domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(note.FrontMatter), body)
+
+	_, err = tx.Exec(ctx,
+		`UPDATE notes SET body=$3, etag=$4, updated_at=$5,
+		        title=$6, tags=$7, status=$8, area=$9, project=$10
+		 WHERE scope=$1 AND path=$2`,
+		v.scope, np.Storage, body, etag, now,
+		note.FrontMatter.Title, note.FrontMatter.Tags,
+		note.FrontMatter.Status, note.FrontMatter.Area, note.FrontMatter.Project,
+	)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.MutationResult{}, err
+	}
+
+	note.ETag = etag
+	result := domain.MutationResult{Summary: note.Summary(), ETag: etag}
+	ik := noteutil.IndexKey(np.Storage, false)
+	links := noteutil.ParseLinks(body)
+	v.cache.Set(ik, result.Summary)
+	v.graph.Upsert(np.Storage, links)
+	v.idx.Add(noteutil.SummaryToDoc(result.Summary, body))
+	return result, nil
+}
+
 func (v *PostgresVault) Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error) {
 	np, err := domain.Normalize(path, false)
 	if err != nil {

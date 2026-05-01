@@ -38,6 +38,9 @@ type NoteWriter interface {
 	Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error)
 	UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.MutationResult, error)
 	PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.MutationResult, error)
+	// Replace atomically replaces a note's body and patches its frontmatter in a single
+	// write. The note must already exist. NoteID and CreatedAt are preserved. ifMatch="" is unconditional.
+	Replace(ctx context.Context, ref domain.NoteRef, fields map[string]any, body, ifMatch string) (domain.MutationResult, error)
 	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error)
 	Delete(ctx context.Context, ref domain.NoteRef, soft bool, ifMatch string) error
 	Promote(ctx context.Context, in domain.PromoteInput) (domain.MutationResult, error)

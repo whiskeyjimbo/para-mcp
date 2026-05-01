@@ -86,6 +86,9 @@ func (v *stubVault) UpdateBody(_ context.Context, _, _ string, _ string) (domain
 func (v *stubVault) PatchFrontMatter(_ context.Context, _ string, _ map[string]any, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
+func (v *stubVault) Replace(_ context.Context, _ string, _ map[string]any, _, _ string) (domain.MutationResult, error) {
+	return domain.MutationResult{}, nil
+}
 func (v *stubVault) Move(_ context.Context, _, _ string, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
@@ -621,6 +624,102 @@ func TestFederation_Promote_OnConflict_Overwrite(t *testing.T) {
 	}
 	if dest.Body != "v1" {
 		t.Errorf("destination body after overwrite = %q, want %q", dest.Body, "v1")
+	}
+}
+
+// countingVault wraps a Vault and records write-method call counts.
+type countingVault struct {
+	ports.Vault
+	creates  atomic.Int64
+	replaces atomic.Int64
+	updates  atomic.Int64
+	patches  atomic.Int64
+}
+
+func (c *countingVault) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {
+	c.creates.Add(1)
+	return c.Vault.Create(ctx, in)
+}
+
+func (c *countingVault) Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error) {
+	c.replaces.Add(1)
+	return c.Vault.Replace(ctx, path, fields, body, ifMatch)
+}
+
+func (c *countingVault) UpdateBody(ctx context.Context, path, body, ifMatch string) (domain.MutationResult, error) {
+	c.updates.Add(1)
+	return c.Vault.UpdateBody(ctx, path, body, ifMatch)
+}
+
+func (c *countingVault) PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error) {
+	c.patches.Add(1)
+	return c.Vault.PatchFrontMatter(ctx, path, fields, ifMatch)
+}
+
+// TestFederation_Promote_Overwrite_SingleWrite verifies that on_conflict=overwrite
+// issues exactly 1 write call (Replace) to the dest vault, not 3.
+func TestFederation_Promote_Overwrite_SingleWrite(t *testing.T) {
+	v1, err := localvault.New("personal", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault personal: %v", err)
+	}
+	v2raw, err := localvault.New("team", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault team: %v", err)
+	}
+	t.Cleanup(func() { _ = v1.Close(); _ = v2raw.Close() })
+
+	v2 := &countingVault{Vault: v2raw}
+
+	reg := NewRegistry()
+	if err := reg.AddVault(v1, ""); err != nil {
+		t.Fatalf("add personal: %v", err)
+	}
+	if err := reg.AddVault(v2, ""); err != nil {
+		t.Fatalf("add team: %v", err)
+	}
+	fed, err := NewFederationService(reg)
+	if err != nil {
+		t.Fatalf("NewFederationService: %v", err)
+	}
+	ctx := context.Background()
+
+	// Create source note.
+	if _, err := fed.Create(ctx, domain.CreateInput{Path: "projects/note.md", Body: "new body"}); err != nil {
+		t.Fatalf("Create personal: %v", err)
+	}
+	// Pre-create dest note so the overwrite path is exercised.
+	teamEntry, _ := fed.reg.EntryFor("team")
+	if _, err := teamEntry.svc.Create(ctx, domain.CreateInput{Path: "projects/note.md", Body: "old body"}); err != nil {
+		t.Fatalf("Create team: %v", err)
+	}
+	// Reset counters after setup writes.
+	v2.creates.Store(0)
+	v2.replaces.Store(0)
+	v2.updates.Store(0)
+	v2.patches.Store(0)
+
+	_, err = fed.Promote(ctx, domain.PromoteInput{
+		Ref:        domain.NoteRef{Scope: "personal", Path: "projects/note.md"},
+		ToScope:    "team",
+		OnConflict: domain.ConflictOverwrite,
+		KeepSource: true,
+	})
+	if err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	if got := v2.creates.Load(); got != 1 {
+		t.Errorf("Create calls = %d, want 1 (the initial attempt that conflicts)", got)
+	}
+	if got := v2.replaces.Load(); got != 1 {
+		t.Errorf("Replace calls = %d, want 1", got)
+	}
+	if got := v2.updates.Load(); got != 0 {
+		t.Errorf("UpdateBody calls = %d, want 0", got)
+	}
+	if got := v2.patches.Load(); got != 0 {
+		t.Errorf("PatchFrontMatter calls = %d, want 0", got)
 	}
 }
 

@@ -75,6 +75,17 @@ func toolNoteDelete() mcplib.Tool {
 	)
 }
 
+func toolNoteReplace() mcplib.Tool {
+	return mcplib.NewTool("note_replace",
+		mcplib.WithDescription("Atomically replace a note's body and patch its frontmatter in a single write. The note must exist. NoteID and CreatedAt are preserved."),
+		mcplib.WithString("scope", mcplib.Required()),
+		mcplib.WithString("path", mcplib.Required()),
+		mcplib.WithString("body", mcplib.Required(), mcplib.Description("New markdown body")),
+		mcplib.WithObject("fields", mcplib.Required(), mcplib.Description("Frontmatter fields to patch, e.g. {\"title\":\"New Title\"}")),
+		mcplib.WithString("if_match", mcplib.Description("ETag from last read; omit for unconditional overwrite")),
+	)
+}
+
 func toolNotePromote() mcplib.Tool {
 	return mcplib.NewTool("note_promote",
 		mcplib.WithDescription("Copy a note to another scope, minting a fresh NoteID at the destination. Optionally archive or delete the source."),

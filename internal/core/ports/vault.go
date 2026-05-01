@@ -27,6 +27,10 @@ type VaultWriter interface {
 	Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error)
 	UpdateBody(ctx context.Context, path, body string, ifMatch string) (domain.MutationResult, error)
 	PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error)
+	// Replace atomically replaces a note's body and patches its frontmatter fields in a
+	// single write. The note must already exist (returns ErrNotFound otherwise).
+	// NoteID and CreatedAt are preserved from the existing note. ifMatch="" is unconditional.
+	Replace(ctx context.Context, path string, fields map[string]any, body, ifMatch string) (domain.MutationResult, error)
 	Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error)
 	Delete(ctx context.Context, path string, soft bool, ifMatch string) error
 }

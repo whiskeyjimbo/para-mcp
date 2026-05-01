@@ -108,6 +108,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	s.AddTool(toolNoteCreate(), h.noteCreate)
 	s.AddTool(toolNoteUpdateBody(), h.noteUpdateBody)
 	s.AddTool(toolNotePatchFrontMatter(), h.notePatchFrontMatter)
+	s.AddTool(toolNoteReplace(), h.noteReplace)
 	s.AddTool(toolNoteMove(), h.noteMove)
 	s.AddTool(toolNoteArchive(), h.noteArchive)
 	s.AddTool(toolNoteDelete(), h.noteDelete)
