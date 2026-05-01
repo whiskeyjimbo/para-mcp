@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
 
 func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {
@@ -21,7 +22,7 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 		}
 		in.FrontMatter.CreatedAt = v.clock().UTC()
 		in.FrontMatter.UpdatedAt = in.FrontMatter.CreatedAt
-		data, err := formatNote(in.FrontMatter, in.Body)
+		data, err := noteutil.FormatNote(in.FrontMatter, in.Body)
 		if err != nil {
 			return err
 		}
@@ -45,9 +46,9 @@ func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.
 			return err
 		}
 		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
-		links := parseLinks(in.Body)
+		links := noteutil.ParseLinks(in.Body)
 		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
-		v.idx.Add(summaryToDoc(result.Summary, in.Body))
+		v.idx.Add(noteutil.SummaryToDoc(result.Summary, in.Body))
 		return nil
 	})
 	return result, err
@@ -69,8 +70,8 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 		}
 		note.FrontMatter.UpdatedAt = v.clock().UTC()
 		note.Body = body
-		note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(note.FrontMatter), body)
-		data, err := formatNote(note.FrontMatter, body)
+		note.ETag = domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(note.FrontMatter), body)
+		data, err := noteutil.FormatNote(note.FrontMatter, body)
 		if err != nil {
 			return err
 		}
@@ -79,9 +80,9 @@ func (v *LocalVault) UpdateBody(ctx context.Context, path, body, ifMatch string)
 			return err
 		}
 		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
-		links := parseLinks(body)
+		links := noteutil.ParseLinks(body)
 		v.upsertWithLinks(np.IndexKey, np.Storage, result.Summary, links)
-		v.idx.Add(summaryToDoc(result.Summary, body))
+		v.idx.Add(noteutil.SummaryToDoc(result.Summary, body))
 		return nil
 	})
 	return result, err
@@ -103,8 +104,8 @@ func (v *LocalVault) PatchFrontMatter(ctx context.Context, path string, fields m
 		}
 		domain.ApplyFrontMatterPatch(&note.FrontMatter, fields)
 		note.FrontMatter.UpdatedAt = v.clock().UTC()
-		note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(note.FrontMatter), note.Body)
-		data, err := formatNote(note.FrontMatter, note.Body)
+		note.ETag = domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(note.FrontMatter), note.Body)
+		data, err := noteutil.FormatNote(note.FrontMatter, note.Body)
 		if err != nil {
 			return err
 		}
@@ -146,12 +147,12 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 		}
 		note.Ref.Path = nnp.Storage
 		result = domain.MutationResult{Summary: note.Summary(), ETag: note.ETag}
-		links := parseLinks(note.Body)
+		links := noteutil.ParseLinks(note.Body)
 		v.cache.Move(np.IndexKey, nnp.IndexKey, result.Summary)
 		v.graph.Remove(np.Storage)
 		v.graph.Upsert(nnp.Storage, links)
 		v.idx.Remove(domain.NoteRef{Scope: v.scope, Path: np.Storage})
-		v.idx.Add(summaryToDoc(result.Summary, note.Body))
+		v.idx.Add(noteutil.SummaryToDoc(result.Summary, note.Body))
 		return nil
 	})
 	return result, err

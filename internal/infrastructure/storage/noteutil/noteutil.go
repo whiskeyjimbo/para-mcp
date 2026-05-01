@@ -348,9 +348,10 @@ func RunBatch[I any](items []I, fn func(I) (path string, res domain.MutationResu
 	return result
 }
 
-// IsMDFile reports whether the file has a .md extension.
+// IsMDFile reports whether the file has a .md or .markdown extension.
 func IsMDFile(path string) bool {
-	return strings.HasSuffix(strings.ToLower(path), ".md")
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown")
 }
 
 // Clock is a function that returns the current time. Useful as a replaceable time source.

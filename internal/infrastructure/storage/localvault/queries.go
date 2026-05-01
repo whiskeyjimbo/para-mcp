@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
 
 func (v *LocalVault) Get(_ context.Context, path string) (domain.Note, error) {
@@ -61,7 +62,7 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 	hits := v.idx.Search(text, limit*3)
 	var results []domain.RankedNote
 	for _, h := range hits {
-		key := indexKey(h.Ref.Path, v.caps.CaseSensitive)
+		key := noteutil.IndexKey(h.Ref.Path, v.caps.CaseSensitive)
 		s, ok := v.cache.Get(key)
 		if !ok {
 			continue
@@ -78,19 +79,19 @@ func (v *LocalVault) Search(_ context.Context, text string, filter domain.Filter
 }
 
 func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAssets bool, filter domain.Filter) ([]domain.BacklinkEntry, error) {
-	keys := linkMatchKeys(ref.Path)
+	keys := noteutil.LinkMatchKeys(ref.Path)
 	seen := make(map[string]bool)
 	var entries []domain.BacklinkEntry
 	for _, key := range keys {
 		for _, src := range v.graph.Backlinks(key) {
-			if !includeAssets && src.isAsset {
+			if !includeAssets && src.IsAsset {
 				continue
 			}
-			if seen[src.path] {
+			if seen[src.Path] {
 				continue
 			}
-			seen[src.path] = true
-			srcKey := indexKey(src.path, v.caps.CaseSensitive)
+			seen[src.Path] = true
+			srcKey := noteutil.IndexKey(src.Path, v.caps.CaseSensitive)
 			s, ok := v.cache.Get(srcKey)
 			if !ok {
 				continue
@@ -98,7 +99,7 @@ func (v *LocalVault) Backlinks(_ context.Context, ref domain.NoteRef, includeAss
 			if !domain.MatchesFilter(s, filter) {
 				continue
 			}
-			entries = append(entries, domain.BacklinkEntry{Summary: s, IsAsset: src.isAsset})
+			entries = append(entries, domain.BacklinkEntry{Summary: s, IsAsset: src.IsAsset})
 		}
 	}
 	return entries, nil
@@ -144,7 +145,7 @@ func (v *LocalVault) countUnrecognized() int {
 		if strings.HasPrefix(first, ".") {
 			return filepath.SkipDir
 		}
-		if isMDFile(path) {
+		if noteutil.IsMDFile(path) {
 			if _, ok := domain.CategoryFromPath(rel); ok {
 				return nil
 			}
@@ -159,7 +160,7 @@ func (v *LocalVault) detectCaseCollisions() []domain.CaseCollision {
 	lower := make(map[string]string, v.cache.Len())
 	var collisions []domain.CaseCollision
 	v.cache.Iterate(func(key string, s domain.NoteSummary) {
-		lk := indexKey(key, false)
+		lk := noteutil.IndexKey(key, false)
 		if prev, exists := lower[lk]; exists && prev != key {
 			collisions = append(collisions, domain.CaseCollision{PathA: prev, PathB: s.Ref.Path})
 		} else {

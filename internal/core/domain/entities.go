@@ -153,13 +153,21 @@ type MutationResult struct {
 	ETag    string
 }
 
+// ConflictStrategy controls behaviour when a promote target already exists.
+type ConflictStrategy string
+
+const (
+	ConflictError     ConflictStrategy = "error"
+	ConflictOverwrite ConflictStrategy = "overwrite"
+)
+
 // PromoteInput is the input for note_promote.
 type PromoteInput struct {
 	Ref            NoteRef
 	ToScope        ScopeID
 	IfMatch        string
 	KeepSource     bool
-	OnConflict     string // "error" | "overwrite"
+	OnConflict     ConflictStrategy
 	IdempotencyKey string
 }
 

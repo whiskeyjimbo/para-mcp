@@ -231,7 +231,7 @@ func (h *handlers) notePromote(ctx context.Context, req mcplib.CallToolRequest) 
 		ToScope:        toScope,
 		IfMatch:        req.GetString("if_match", ""),
 		KeepSource:     req.GetBool("keep_source", false),
-		OnConflict:     req.GetString("on_conflict", "error"),
+		OnConflict:     domain.ConflictStrategy(req.GetString("on_conflict", "error")),
 		IdempotencyKey: req.GetString("idempotency_key", ""),
 	}
 	res, err := h.svc.Promote(ctx, in)

@@ -467,7 +467,7 @@ func (f *FederationService) Promote(ctx context.Context, in domain.PromoteInput)
 
 	res, cerr := destEntry.svc.Create(ctx, ci)
 	if cerr != nil {
-		if !isConflict(cerr) || in.OnConflict != "overwrite" {
+		if !isConflict(cerr) || in.OnConflict != domain.ConflictOverwrite {
 			return domain.MutationResult{}, cerr
 		}
 		existing, gerr := destEntry.svc.Get(ctx, destRef)

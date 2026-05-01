@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
 
 func (v *LocalVault) normalizePath(path string) (domain.NormalizedPath, error) {
@@ -31,7 +31,7 @@ func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
 		}
 		return domain.Note{}, err
 	}
-	fm, body, err := parseNote(data)
+	fm, body, err := noteutil.ParseNote(data)
 	if err != nil {
 		return domain.Note{}, err
 	}
@@ -40,7 +40,7 @@ func (v *LocalVault) readNote(storagePath string) (domain.Note, error) {
 		FrontMatter: fm,
 		Body:        body,
 	}
-	note.ETag = domain.ComputeETag(canonicalFrontMatterYAML(fm), body)
+	note.ETag = domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(fm), body)
 	return note, nil
 }
 
@@ -77,27 +77,6 @@ func evalSymlinksPartial(abs string) (string, error) {
 			return real, nil
 		}
 	}
-}
-
-func summaryToDoc(s domain.NoteSummary, body string) ports.Doc {
-	return ports.Doc{
-		Ref:       s.Ref,
-		Title:     s.Title,
-		Body:      body,
-		UpdatedAt: s.UpdatedAt,
-	}
-}
-
-func indexKey(path string, caseSensitive bool) string {
-	if caseSensitive {
-		return path
-	}
-	return strings.ToLower(path)
-}
-
-func isMDFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".md" || ext == ".markdown"
 }
 
 func probeCaseSensitivity(root string) bool {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
 
 // RescanVault re-walks the vault root and rebuilds all indexes.
@@ -16,7 +17,7 @@ func (v *LocalVault) scanVault() error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !isMDFile(path) {
+		if d.IsDir() || !noteutil.IsMDFile(path) {
 			return nil
 		}
 		rel, err := filepath.Rel(v.root, path)
@@ -40,7 +41,7 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 	}
 	if domain.GetNoteID(note.FrontMatter) == "" {
 		domain.SetNoteID(&note.FrontMatter, domain.DeriveNoteID(np.Storage, note.ETag))
-		if data, err := formatNote(note.FrontMatter, note.Body); err == nil {
+		if data, err := noteutil.FormatNote(note.FrontMatter, note.Body); err == nil {
 			// Atomic write: write to a sibling tmp file then rename, so concurrent
 			// Get calls never observe a half-written (truncated) file.
 			tmp := absPath + ".para_tmp"
@@ -50,12 +51,12 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 		}
 	}
 	s := note.Summary()
-	links := parseLinks(note.Body)
+	links := noteutil.ParseLinks(note.Body)
 	v.upsertWithLinks(np.IndexKey, np.Storage, s, links)
-	v.idx.Add(summaryToDoc(s, note.Body))
+	v.idx.Add(noteutil.SummaryToDoc(s, note.Body))
 }
 
-func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []outLink) {
+func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []noteutil.OutLink) {
 	v.cache.Set(indexKey, s)
 	v.graph.Upsert(storagePath, links)
 }

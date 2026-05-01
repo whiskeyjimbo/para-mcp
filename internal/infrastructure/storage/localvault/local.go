@@ -14,6 +14,7 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/actor"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
 
 // Option configures a LocalVault.
@@ -92,8 +93,8 @@ type LocalVault struct {
 	idx    ports.FTSIndex
 	w      *watcher
 
-	cache *NoteCache
-	graph *BacklinkGraph
+	cache *noteutil.NoteCache
+	graph *noteutil.BacklinkGraph
 }
 
 // New creates a LocalVault rooted at root with the given scope.
@@ -129,8 +130,8 @@ func New(scope, root string, opts ...Option) (*LocalVault, error) {
 		clock:  cfg.clock,
 		actors: exec,
 		idx:    fts,
-		cache:  newNoteCache(),
-		graph:  newBacklinkGraph(),
+		cache:  noteutil.NewNoteCache(),
+		graph:  noteutil.NewBacklinkGraph(),
 		caps: domain.Capabilities{
 			Writable:      true,
 			SoftDelete:    true,
@@ -158,7 +159,7 @@ func (v *LocalVault) Capabilities() domain.Capabilities { return v.caps }
 
 // IndexFile parses and indexes the note at absPath. No-op for non-markdown files.
 func (v *LocalVault) IndexFile(absPath string) {
-	if !isMDFile(absPath) {
+	if !noteutil.IsMDFile(absPath) {
 		return
 	}
 	rel, err := filepath.Rel(v.root, absPath)
@@ -180,7 +181,7 @@ func (v *LocalVault) IndexFile(absPath string) {
 
 // RemoveFile removes the note at absPath from all indexes. No-op for non-markdown files.
 func (v *LocalVault) RemoveFile(absPath string) {
-	if !isMDFile(absPath) {
+	if !noteutil.IsMDFile(absPath) {
 		return
 	}
 	rel, err := filepath.Rel(v.root, absPath)
