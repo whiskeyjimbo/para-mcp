@@ -2,11 +2,23 @@ package remotevault
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
+
+// remoteMutation is the flat JSON shape the remote MCP server returns for write operations.
+// The MCP handler embeds NoteSummary at the top level rather than nesting it under "Summary".
+type remoteMutation struct {
+	domain.NoteSummary
+	ETag string `json:"ETag"`
+}
+
+func (r remoteMutation) toDomain() domain.MutationResult {
+	return domain.MutationResult{Summary: r.NoteSummary, ETag: r.ETag}
+}
 
 // RemoteVault implements ports.Vault against a remote paras MCP server.
 // It rewrites the remote's canonical scope name to the local scope alias
@@ -175,10 +187,11 @@ func (v *RemoteVault) Create(ctx context.Context, in domain.CreateInput) (domain
 		"tags":    in.FrontMatter.Tags,
 		"body":    in.Body,
 	}
-	var res domain.MutationResult
-	if err := v.conn.call(ctx, "note_create", args, &res); err != nil {
+	var raw remoteMutation
+	if err := v.conn.call(ctx, "note_create", args, &raw); err != nil {
 		return domain.MutationResult{}, translateErr(err)
 	}
+	res := raw.toDomain()
 	res.Summary.Ref.Scope = v.localScope
 	v.summaries.invalidate()
 	return res, nil
@@ -191,10 +204,11 @@ func (v *RemoteVault) UpdateBody(ctx context.Context, path, body, ifMatch string
 		"body":     body,
 		"if_match": ifMatch,
 	}
-	var res domain.MutationResult
-	if err := v.conn.call(ctx, "note_update_body", args, &res); err != nil {
+	var raw remoteMutation
+	if err := v.conn.call(ctx, "note_update_body", args, &raw); err != nil {
 		return domain.MutationResult{}, translateErr(err)
 	}
+	res := raw.toDomain()
 	res.Summary.Ref.Scope = v.localScope
 	v.bodies.invalidate(path)
 	v.summaries.invalidate()
@@ -208,10 +222,11 @@ func (v *RemoteVault) PatchFrontMatter(ctx context.Context, path string, fields 
 		"fields":   fields,
 		"if_match": ifMatch,
 	}
-	var res domain.MutationResult
-	if err := v.conn.call(ctx, "note_patch_frontmatter", args, &res); err != nil {
+	var raw remoteMutation
+	if err := v.conn.call(ctx, "note_patch_frontmatter", args, &raw); err != nil {
 		return domain.MutationResult{}, translateErr(err)
 	}
+	res := raw.toDomain()
 	res.Summary.Ref.Scope = v.localScope
 	v.bodies.invalidate(path)
 	v.summaries.invalidate()
@@ -225,10 +240,11 @@ func (v *RemoteVault) Move(ctx context.Context, path, newPath, ifMatch string) (
 		"new_path": newPath,
 		"if_match": ifMatch,
 	}
-	var res domain.MutationResult
-	if err := v.conn.call(ctx, "note_move", args, &res); err != nil {
+	var raw remoteMutation
+	if err := v.conn.call(ctx, "note_move", args, &raw); err != nil {
 		return domain.MutationResult{}, translateErr(err)
 	}
+	res := raw.toDomain()
 	res.Summary.Ref.Scope = v.localScope
 	v.bodies.invalidate(path)
 	v.bodies.invalidate(newPath)
@@ -358,14 +374,14 @@ func queryRequestToArgs(scope domain.ScopeID, q domain.QueryRequest) map[string]
 	return args
 }
 
-// translateErr maps the remote error prefix (e.g. "not_found: ...") injected
-// by the remote's toolErr function back to a domain sentinel error.
+// translateErr maps the remote error back to a domain sentinel error.
+// The remote emits two formats: plain "prefix: message" for most errors, and
+// JSON {"error":"conflict",...} for conflict errors (to carry details.request_id).
 func translateErr(err error) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
-	// Strip the "remotevault: <tool>: remote error: " wrapper to get the prefix.
 	const marker = "remote error: "
 	idx := 0
 	for i := 0; i+len(marker) <= len(msg); i++ {
@@ -378,6 +394,19 @@ func translateErr(err error) error {
 		return err
 	}
 	tail := msg[idx:]
+	// JSON format: {"error":"conflict",...}
+	if len(tail) > 0 && tail[0] == '{' {
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal([]byte(tail), &errResp) == nil {
+			if sentinel, ok := remoteErrPrefixes[errResp.Error]; ok {
+				return fmt.Errorf("%w: %s", sentinel, msg)
+			}
+		}
+		return err
+	}
+	// Plain prefix format: "prefix: message"
 	for prefix, sentinel := range remoteErrPrefixes {
 		if len(tail) >= len(prefix) && tail[:len(prefix)] == prefix {
 			return fmt.Errorf("%w: %s", sentinel, msg)

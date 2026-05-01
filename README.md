@@ -8,7 +8,7 @@ An MCP server for PARA-structured markdown vaults. Gives Claude Desktop (and any
 Projects/  Areas/  Resources/  Archives/
 ```
 
-Notes are plain `.md` files with YAML frontmatter. Paras indexes them, watches for changes, and exposes 18 MCP tools covering the full CRUD lifecycle -- single notes and batch operations alike.
+Notes are plain `.md` files with YAML frontmatter. Paras indexes them, watches for changes, and exposes 20 MCP tools covering the full CRUD lifecycle -- single notes, batch operations, and cross-scope federation.
 
 ---
 
@@ -26,6 +26,8 @@ Requires Go 1.26+.
 
 ## MCP Integration
 
+### Single-vault mode
+
 Add paras to your MCP config:
 
 ```json
@@ -42,12 +44,49 @@ Add paras to your MCP config:
 }
 ```
 
+### Federation mode (multi-vault)
+
+Run a remote vault as an HTTP server:
+
+```bash
+paras --vault /path/to/team-vault --scope team --addr :8080
+```
+
+Write a federation config and run the gateway in stdio mode:
+
+```yaml
+# federation.yaml
+local:
+  vault: /path/to/your-vault
+  scope: personal
+  tombstone_store: /path/to/tombstones.json  # persists deletes across restarts
+remotes:
+  - scope: team                      # local alias
+    canonical_remote: team           # scope name on the remote server (defaults to scope)
+    url: http://team-host:8080/mcp
+```
+
+```json
+{
+  "mcpServers": {
+    "paras": {
+      "command": "/path/to/paras",
+      "args": ["--config", "/path/to/federation.yaml"]
+    }
+  }
+}
+```
+
+The gateway fans out reads across all vaults and routes writes to the vault that owns the target scope. Remote vaults that advertise the `Watch` capability are subscribed via SSE (`/events`) so their summary cache is invalidated on push rather than waiting for the TTL.
+
 Flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--vault` | *(required)* | Path to the vault root directory |
+| `--vault` | *(required if no --config)* | Path to the vault root directory |
 | `--scope` | `personal` | Scope identifier for this vault instance |
+| `--config` | *(required if no --vault)* | Path to federation config YAML (multi-vault mode) |
+| `--addr` | *(empty)* | HTTP listen address (e.g. `:8080`); enables server mode with SSE `/events` endpoint |
 
 ---
 
@@ -93,6 +132,7 @@ Body goes here. [[wikilinks]] to other notes are indexed automatically.
 | `note_move` | Move/rename a note to a new path |
 | `note_archive` | Move a note into `archives/` |
 | `note_delete` | Delete; `soft=true` moves to `.trash` (default), `soft=false` removes |
+| `note_promote` | Copy a note across scopes; mints a fresh NoteID at the destination; source archived when `keep_source=false`; `on_conflict: error\|overwrite`; `idempotency_key` for safe retries *(federation mode only)* |
 
 ### Query & Discovery
 
@@ -111,6 +151,7 @@ Body goes here. [[wikilinks]] to other notes are indexed automatically.
 | `vault_stats` | Note counts by PARA category |
 | `vault_health` | Diagnostics: case collisions, unrecognized files, watcher status |
 | `vault_rescan` | Force a vault re-index; mints IDs for newly discovered notes |
+| `vault_list_scopes` | List all registered scopes and their capabilities |
 
 ### Batch Operations
 

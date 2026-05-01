@@ -625,6 +625,19 @@ def run_tests(c: MCPClient):
     resp = c.call("note_get", {"scope": "personal", "path": "projects/hard-del.md"})
     check_err("hard-deleted note not accessible", resp, "not_found")
 
+    # ETag precondition: stale if_match → conflict
+    resp = c.call("note_create", {"path": "projects/del-occ.md", "body": "occ delete"})
+    _, t_docc = result_content(resp)
+    etag_docc = parse_json(t_docc).get("ETag") if t_docc else None
+    c.call("note_update_body", {"scope": "personal", "path": "projects/del-occ.md", "body": "mutated"})
+    resp = c.call("note_delete", {"scope": "personal", "path": "projects/del-occ.md", "if_match": etag_docc})
+    check_err("delete with stale ETag → conflict", resp, "conflict")
+
+    section("note_promote")
+    # Single-vault mode has no cross-scope capability; promote always returns scope_forbidden.
+    resp = c.call("note_promote", {"scope": "personal", "path": "projects/any.md", "to_scope": "team"})
+    check_err("note_promote in single-vault → scope_forbidden", resp, "scope_forbidden")
+
 
 def run_phase2_tests(c: MCPClient, vault_dir: str):
 
@@ -1083,6 +1096,121 @@ def run_federation_tests(binary: str):
                 team_hits = [r for r in results
                              if r.get("Summary", {}).get("Ref", {}).get("Scope") == "team"]
                 check("team notes appear in search results", len(team_hits) > 0, str(results))
+
+            # --- federation writes: mutations forwarded to remote scope ---
+            section("federation/federation_writes")
+            resp = gw.call("note_get", {"scope": "team", "path": "projects/team-proj-0.md"})
+            is_err, text = check_ok("get team note for write test", resp)
+            team_write_etag = None
+            if not is_err:
+                team_write_etag = parse_json(text).get("ETag") if text else None
+
+            resp = gw.call("note_update_body", {
+                "scope": "team", "path": "projects/team-proj-0.md",
+                "body": "Updated by gateway.", "if_match": team_write_etag,
+            })
+            is_err, text = check_ok("update body on remote scope via gateway", resp)
+            if not is_err:
+                data = parse_json(text)
+                check("ETag rotated after remote write", data and data.get("ETag") != team_write_etag, str(data))
+
+            resp = gw.call("note_get", {"scope": "team", "path": "projects/team-proj-0.md"})
+            is_err, text = check_ok("get remote note after gateway write", resp)
+            if not is_err:
+                data = parse_json(text)
+                check("remote body updated via gateway",
+                      data and "Updated by gateway" in (data.get("Body") or ""), str(data))
+
+            resp = gw.call("note_update_body", {
+                "scope": "team", "path": "projects/team-proj-0.md",
+                "body": "stale overwrite attempt", "if_match": team_write_etag,  # stale
+            })
+            check_err("remote write with stale ETag → conflict", resp, "conflict")
+
+            # --- note_promote: cross-scope copy with ETag, on_conflict, idempotency_key ---
+            section("federation/note_promote")
+            resp = gw.call("note_create", {"path": "projects/promo-test.md", "body": "promote me", "title": "Promo Test"})
+            is_err, text = check_ok("create personal note for promote", resp)
+            promo_etag1 = parse_json(text).get("ETag") if (not is_err and text) else None
+
+            # Stale ETag → conflict
+            if promo_etag1:
+                gw.call("note_update_body", {"scope": "personal", "path": "projects/promo-test.md", "body": "v2"})
+                resp = gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/promo-test.md",
+                    "to_scope": "team", "if_match": promo_etag1,
+                })
+                check_err("promote with stale source ETag → conflict", resp, "conflict")
+
+            # Fresh ETag, keep_source=false → source archived
+            resp = gw.call("note_get", {"scope": "personal", "path": "projects/promo-test.md"})
+            _, tg = result_content(resp)
+            promo_etag2 = parse_json(tg).get("ETag") if tg else None
+            resp = gw.call("note_promote", {
+                "scope": "personal", "path": "projects/promo-test.md",
+                "to_scope": "team", "if_match": promo_etag2, "keep_source": False,
+            })
+            is_err, text = check_ok("promote personal→team with fresh ETag", resp)
+            if not is_err:
+                data = parse_json(text)
+                check("result scope is team",
+                      data and data.get("Ref", {}).get("Scope") == "team", str(data))
+                check("result path matches",
+                      data and data.get("Ref", {}).get("Path") == "projects/promo-test.md", str(data))
+                check("ETag present on promote result", data and bool(data.get("ETag")), str(data))
+
+            resp = gw.call("note_get", {"scope": "personal", "path": "projects/promo-test.md"})
+            check_err("source archived after promote (keep_source=false)", resp, "not_found")
+
+            resp = gw.call("note_get", {"scope": "team", "path": "projects/promo-test.md"})
+            is_err, text = check_ok("promoted note accessible in team scope", resp)
+            if not is_err:
+                data = parse_json(text)
+                check("promoted body in team", data and "v2" in (data.get("Body") or ""), str(data))
+                fm = (data.get("FrontMatter") or {}) if data else {}
+                note_id_team = fm.get("Extra", {}).get("derived", {}).get("note_id", "")
+                check("promoted note has a NoteID", bool(note_id_team), str(fm))
+
+            # on_conflict: error / overwrite
+            resp = gw.call("note_create", {"path": "projects/clash-src.md", "body": "clash"})
+            is_err_c, _ = check_ok("create clash-src for on_conflict test", resp)
+            if not is_err_c:
+                gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/clash-src.md",
+                    "to_scope": "team", "keep_source": True,
+                })
+                resp = gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/clash-src.md",
+                    "to_scope": "team", "on_conflict": "error", "keep_source": True,
+                })
+                check_err("promote on_conflict=error when dest exists → conflict", resp, "conflict")
+                resp = gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/clash-src.md",
+                    "to_scope": "team", "on_conflict": "overwrite", "keep_source": True,
+                })
+                check_ok("promote on_conflict=overwrite when dest exists → ok", resp)
+
+            # idempotency_key: second call returns cached result
+            resp = gw.call("note_create", {"path": "projects/idem-promo.md", "body": "idempotent"})
+            is_err_i, _ = check_ok("create idem-promo for idempotency test", resp)
+            if not is_err_i:
+                resp1 = gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/idem-promo.md",
+                    "to_scope": "team", "keep_source": True,
+                    "idempotency_key": "e2e-idem-001",
+                })
+                is_err1, text1 = check_ok("first promote with idempotency_key", resp1)
+                resp2 = gw.call("note_promote", {
+                    "scope": "personal", "path": "projects/idem-promo.md",
+                    "to_scope": "team", "keep_source": True,
+                    "idempotency_key": "e2e-idem-001",
+                })
+                is_err2, text2 = check_ok("second promote same idempotency_key (cached)", resp2)
+                if not is_err1 and not is_err2:
+                    d1, d2 = parse_json(text1), parse_json(text2)
+                    check("idempotency: same ETag on retry",
+                          d1 and d2 and d1.get("ETag") == d2.get("ETag"),
+                          f"first={d1.get('ETag') if d1 else None} second={d2.get('ETag') if d2 else None}")
 
             # --- partial failure: stop remote, re-query ---
             section("federation/partial_failure")
