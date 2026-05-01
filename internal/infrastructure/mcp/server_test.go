@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/application"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
 
@@ -143,6 +145,80 @@ func TestWithClockInjectedIntoNotesStale(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("notesStale returned error: %v", result)
+	}
+}
+
+// TestConflictError_DetailsRequestID verifies that a stale-ETag write returns a
+// JSON body with {"error":"conflict","details":{"request_id":"..."}} when the
+// caller supplies an X-PARA-Request-Id via context.
+func TestConflictError_DetailsRequestID(t *testing.T) {
+	svc := newTestService(t)
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	ctx := context.Background()
+
+	// Create a note and capture its ETag.
+	createReq := mcplib.CallToolRequest{}
+	createReq.Params.Arguments = map[string]any{"path": "projects/occ.md", "body": "v1"}
+	res, err := h.noteCreate(ctx, createReq)
+	if err != nil || res.IsError {
+		t.Fatalf("noteCreate failed: err=%v isError=%v", err, res.IsError)
+	}
+	var created struct {
+		ETag string `json:"etag"`
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &created); err != nil {
+		t.Fatalf("unmarshal create result: %v", err)
+	}
+	staleETag := created.ETag
+
+	// Mutate so the ETag advances.
+	updateReq := mcplib.CallToolRequest{}
+	updateReq.Params.Arguments = map[string]any{
+		"scope":    "personal",
+		"path":     "projects/occ.md",
+		"body":     "v2",
+		"if_match": staleETag,
+	}
+	if _, err := h.noteUpdateBody(ctx, updateReq); err != nil {
+		t.Fatalf("noteUpdateBody: %v", err)
+	}
+
+	// Attempt update with stale ETag + a request ID in context.
+	const reqID = "req_01HZZZZZZZZZZZZZZZZZZZZZZA"
+	ctxWithID := remotevault.WithRequestID(ctx, reqID)
+	staleReq := mcplib.CallToolRequest{}
+	staleReq.Params.Arguments = map[string]any{
+		"scope":    "personal",
+		"path":     "projects/occ.md",
+		"body":     "v3",
+		"if_match": staleETag,
+	}
+	result, err := h.noteUpdateBody(ctxWithID, staleReq)
+	if err != nil {
+		t.Fatalf("noteUpdateBody: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for stale ETag")
+	}
+
+	var resp struct {
+		Error   string `json:"error"`
+		Details struct {
+			RequestID string `json:"request_id"`
+		} `json:"details"`
+	}
+	text := result.Content[0].(mcplib.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("conflict response is not valid JSON: %v\nbody: %s", err, text)
+	}
+	if resp.Error != "conflict" {
+		t.Errorf("error field = %q, want %q", resp.Error, "conflict")
+	}
+	if resp.Details.RequestID != reqID {
+		t.Errorf("details.request_id = %q, want %q", resp.Details.RequestID, reqID)
 	}
 }
 
