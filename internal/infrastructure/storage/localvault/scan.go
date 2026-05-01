@@ -1,13 +1,21 @@
 package localvault
 
 import (
+	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
 )
+
+// indexSeq is a per-process monotonic counter that gives each indexNote
+// write-back its own unique tmp file name, preventing concurrent writes
+// to the same .para_tmp file.
+var indexSeq atomic.Uint64
 
 // RescanVault re-walks the vault root and rebuilds all indexes.
 func (v *LocalVault) RescanVault() error { return v.scanVault() }
@@ -29,7 +37,13 @@ func (v *LocalVault) scanVault() error {
 		if err != nil {
 			return nil
 		}
-		v.indexNote(path, np)
+		// Use the actor pool to serialize with concurrent IndexFile calls from the
+		// fsnotify watcher. Without this, both can enter indexNote concurrently for
+		// the same path, racing on the .para_tmp write-back.
+		_ = v.actors.Do(context.Background(), v.scope, np.Storage, func() error {
+			v.indexNote(path, np)
+			return nil
+		})
 		return nil
 	})
 }
@@ -42,11 +56,14 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 	if domain.GetNoteID(note.FrontMatter) == "" {
 		domain.SetNoteID(&note.FrontMatter, domain.DeriveNoteID(np.Storage, note.ETag))
 		if data, err := noteutil.FormatNote(note.FrontMatter, note.Body); err == nil {
-			// Atomic write: write to a sibling tmp file then rename, so concurrent
-			// Get calls never observe a half-written (truncated) file.
-			tmp := absPath + ".para_tmp"
+			// Atomic write: write to a uniquely-named sibling tmp file then rename.
+			// The unique suffix (per-process counter) ensures concurrent indexNote
+			// calls for the same path don't clobber each other's tmp files.
+			tmp := fmt.Sprintf("%s.para_tmp.%d", absPath, indexSeq.Add(1))
 			if werr := os.WriteFile(tmp, data, 0o644); werr == nil {
-				_ = os.Rename(tmp, absPath)
+				if rerr := os.Rename(tmp, absPath); rerr != nil {
+					_ = os.Remove(tmp) // clean up if rename failed
+				}
 			}
 		}
 	}
