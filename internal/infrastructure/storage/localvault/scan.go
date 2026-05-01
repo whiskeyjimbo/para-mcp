@@ -49,10 +49,27 @@ func (v *LocalVault) scanVault() error {
 }
 
 func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
-	note, err := v.readNote(np.Storage)
+	raw, err := os.ReadFile(absPath)
 	if err != nil {
 		return
 	}
+	if len(raw) == 0 {
+		// File is still being written (Create event fired before os.WriteFile
+		// flushed data). The subsequent Write (close_write) event will trigger
+		// a correct reindex when the file is complete.
+		return
+	}
+	fm, body, err := noteutil.ParseNote(raw)
+	if err != nil {
+		return
+	}
+	note := domain.Note{
+		Ref:         domain.NoteRef{Scope: v.scope, Path: np.Storage},
+		FrontMatter: fm,
+		Body:        body,
+	}
+	note.ETag = domain.ComputeETag(noteutil.CanonicalFrontMatterYAML(fm), body)
+
 	if domain.GetNoteID(note.FrontMatter) == "" {
 		domain.SetNoteID(&note.FrontMatter, domain.DeriveNoteID(np.Storage, note.ETag))
 		if data, err := noteutil.FormatNote(note.FrontMatter, note.Body); err == nil {

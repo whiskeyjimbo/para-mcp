@@ -296,6 +296,53 @@ func TestCheckSymlinks_NonExistentPath(t *testing.T) {
 	}
 }
 
+// TestRescan_ExternalWriteTitleRoundTrip reproduces the vault_rescan flake: a
+// note written directly to disk (simulating an external editor) must have its
+// title preserved after vault_rescan, even when the fsnotify watcher fires a
+// concurrent IndexFile call for the same path.
+//
+// Run the stress version with:
+//
+//	go test -run TestRescan_ExternalWriteTitleRoundTrip -count=1000 -timeout=5m
+func TestRescan_ExternalWriteTitleRoundTrip(t *testing.T) {
+	v := newTestVault(t)
+	ctx := context.Background()
+
+	// Create the resources/ directory so the note path is valid.
+	resDir := filepath.Join(v.root, "resources")
+	if err := os.MkdirAll(resDir, 0o755); err != nil {
+		t.Fatalf("mkdir resources: %v", err)
+	}
+
+	// Write the note directly to disk, bypassing the MCP layer — exactly what
+	// the e2e test does.
+	notePath := filepath.Join(resDir, "external.md")
+	content := "---\ntitle: External Note\n---\nWritten directly to disk.\n"
+	if err := os.WriteFile(notePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write note: %v", err)
+	}
+
+	// Trigger a rescan immediately. The race window: fsnotify may have already
+	// queued a Create event for the file; both scanVault and IndexFile would
+	// then call indexNote concurrently without the actor-pool fix.
+	if err := v.Rescan(ctx); err != nil {
+		t.Fatalf("Rescan: %v", err)
+	}
+
+	note, err := v.Get(ctx, "resources/external.md")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if note.FrontMatter.Title != "External Note" {
+		t.Errorf("title = %q, want %q (note_id=%q, body=%q)",
+			note.FrontMatter.Title, "External Note",
+			domain.GetNoteID(note.FrontMatter), note.Body)
+	}
+	if note.Body != "Written directly to disk.\n" {
+		t.Errorf("body = %q, want %q", note.Body, "Written directly to disk.\n")
+	}
+}
+
 // BenchmarkCreateBatch_FTSNoBackpressure verifies that 100 concurrent FTS Add
 // calls via CreateBatch do not block on FTS channel backpressure. The index
 // channel has capacity 512; 100 items must enqueue without stalling.
