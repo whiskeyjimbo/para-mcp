@@ -87,7 +87,7 @@ func main() {
 	if *addr != "" {
 		mcpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
 		mux := http.NewServeMux()
-		mux.Handle("/", mcplayer.RequestIDMiddleware(mcpSrv))
+		mux.Handle("/", mcplayer.ScopeMemoMiddleware(mcplayer.RequestIDMiddleware(mcpSrv)))
 		mux.Handle("/events", mcplayer.SSEHandler(bus))
 		httpSrv := &http.Server{
 			Addr:    *addr,

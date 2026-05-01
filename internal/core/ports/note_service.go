@@ -2,9 +2,46 @@ package ports
 
 import (
 	"context"
+	"sync"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 )
+
+type scopeMemoKey struct{}
+
+type scopeMemo struct {
+	once   sync.Once
+	result []domain.ScopeID
+}
+
+// WithScopeMemo returns a context carrying a memoization slot for scope resolution.
+// Install this once per request (e.g. in HTTP middleware) so MemoScopeResolver can
+// short-circuit redundant Scopes calls within the same request lifecycle.
+func WithScopeMemo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scopeMemoKey{}, &scopeMemo{})
+}
+
+// MemoScopeResolver wraps a ScopeResolver, returning a cached result within a
+// single request context when the context carries a memo slot from WithScopeMemo.
+// Without the slot (e.g. in tests that bypass middleware) it falls through to the
+// inner resolver unchanged.
+type MemoScopeResolver struct {
+	inner ScopeResolver
+}
+
+// NewMemoScopeResolver wraps inner so that repeated Scopes calls within the same
+// request context resolve at most once when the context carries a WithScopeMemo slot.
+func NewMemoScopeResolver(inner ScopeResolver) *MemoScopeResolver {
+	return &MemoScopeResolver{inner: inner}
+}
+
+func (m *MemoScopeResolver) Scopes(ctx context.Context) []domain.ScopeID {
+	if memo, ok := ctx.Value(scopeMemoKey{}).(*scopeMemo); ok {
+		memo.once.Do(func() { memo.result = m.inner.Scopes(ctx) })
+		return memo.result
+	}
+	return m.inner.Scopes(ctx)
+}
 
 // ScopeResolver resolves the permitted scopes for a request.
 // Implementations may derive scopes from context (middleware-injected JWT,

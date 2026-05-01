@@ -96,7 +96,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 
 	h := &handlers{
 		svc:                      svc,
-		scopes:                   cfg.scopes,
+		scopes:                   ports.NewMemoScopeResolver(cfg.scopes),
 		events:                   cfg.events,
 		auditSearcher:            cfg.auditSearcher,
 		rbacRegistry:             cfg.rbacRegistry,

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
 )
 
@@ -12,6 +13,14 @@ import (
 var requestIDPattern = regexp.MustCompile(`^req_[0-9A-HJKMNP-TV-Z]{26}$`)
 
 const requestIDHeader = "X-PARA-Request-Id"
+
+// ScopeMemoMiddleware installs a per-request scope memoization slot in the
+// context so that MemoScopeResolver resolves scopes at most once per request.
+func ScopeMemoMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(ports.WithScopeMemo(r.Context())))
+	})
+}
 
 // RequestIDMiddleware validates the inbound X-PARA-Request-Id header and,
 // when valid, stores it in the request context for propagation to outbound

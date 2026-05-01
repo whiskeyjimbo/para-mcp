@@ -1,10 +1,73 @@
 package mcp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+
+	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 )
+
+// countingScopeResolver counts how many times Scopes is invoked.
+type countingScopeResolver struct {
+	calls atomic.Int64
+	ids   []domain.ScopeID
+}
+
+func (c *countingScopeResolver) Scopes(_ context.Context) []domain.ScopeID {
+	c.calls.Add(1)
+	return c.ids
+}
+
+func TestMemoScopeResolver_SingleCallWithMemoSlot(t *testing.T) {
+	inner := &countingScopeResolver{ids: []domain.ScopeID{"personal"}}
+	memo := ports.NewMemoScopeResolver(inner)
+
+	ctx := ports.WithScopeMemo(context.Background())
+	_ = memo.Scopes(ctx)
+	_ = memo.Scopes(ctx)
+	_ = memo.Scopes(ctx)
+
+	if got := inner.calls.Load(); got != 1 {
+		t.Errorf("inner Scopes called %d times, want 1", got)
+	}
+}
+
+func TestMemoScopeResolver_FallsThrough_WithoutMemoSlot(t *testing.T) {
+	inner := &countingScopeResolver{ids: []domain.ScopeID{"personal"}}
+	memo := ports.NewMemoScopeResolver(inner)
+
+	ctx := context.Background()
+	_ = memo.Scopes(ctx)
+	_ = memo.Scopes(ctx)
+
+	if got := inner.calls.Load(); got != 2 {
+		t.Errorf("inner Scopes called %d times without memo slot, want 2", got)
+	}
+}
+
+func TestScopeMemoMiddleware_InstallsMemoSlot(t *testing.T) {
+	inner := &countingScopeResolver{ids: []domain.ScopeID{"personal"}}
+	memo := ports.NewMemoScopeResolver(inner)
+
+	var callsInHandler int64
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_ = memo.Scopes(r.Context())
+		_ = memo.Scopes(r.Context())
+		callsInHandler = inner.calls.Load()
+	})
+
+	h := ScopeMemoMiddleware(next)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if callsInHandler != 1 {
+		t.Errorf("inner Scopes called %d times inside handler, want 1", callsInHandler)
+	}
+}
 
 func TestRequestIDMiddleware_ValidHeader_Passes(t *testing.T) {
 	called := false
