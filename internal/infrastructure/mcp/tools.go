@@ -88,7 +88,8 @@ func toolNotesList() mcplib.Tool {
 		),
 		mcplib.WithBoolean("desc", mcplib.Description("Sort descending")),
 		mcplib.WithNumber("limit", mcplib.Description("Max results (1-100, default 20)")),
-		mcplib.WithNumber("offset", mcplib.Description("Pagination offset")),
+		mcplib.WithNumber("offset", mcplib.Description("Pagination offset (max 500; prefer cursor)")),
+		mcplib.WithString("cursor", mcplib.Description("Opaque pagination cursor from a previous notes_list response")),
 	)
 }
 

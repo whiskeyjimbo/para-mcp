@@ -12,6 +12,8 @@ var (
 	ErrInvalidPath        = errors.New("invalid path")
 	ErrInvalidFrontMatter = errors.New("invalid frontmatter")
 	ErrScopeForbidden     = errors.New("scope not permitted")
+	ErrUnavailable        = errors.New("all scopes unavailable")
+	ErrInvalidCursor      = errors.New("cursor invalid or expired")
 )
 
 // SearchMode selects the retrieval strategy.

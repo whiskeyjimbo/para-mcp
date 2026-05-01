@@ -14,6 +14,7 @@ import (
 const (
 	defaultListLimit   = 20
 	defaultSearchLimit = 10
+	maxListOffset      = 500
 )
 
 type handlers struct {
@@ -148,6 +149,10 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 }
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	offset := req.GetInt("offset", 0)
+	if offset > maxListOffset {
+		return mcplib.NewToolResultError(fmt.Sprintf("offset %d exceeds maximum %d; use cursor for deep pagination", offset, maxListOffset)), nil
+	}
 	cats := parseCategorySlice(req.GetStringSlice("categories", nil))
 	result, err := h.svc.Query(ctx, domain.NewQueryRequest(
 		domain.WithQueryFilter(domain.NewFilter(
@@ -159,7 +164,8 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 		)),
 		domain.WithQueryAllowedScopes(h.scopes.Scopes(ctx)),
 		domain.WithQuerySort(domain.SortField(req.GetString("sort", string(domain.SortByUpdated))), req.GetBool("desc", false)),
-		domain.WithQueryPagination(req.GetInt("limit", defaultListLimit), req.GetInt("offset", 0)),
+		domain.WithQueryPagination(req.GetInt("limit", defaultListLimit), offset),
+		domain.WithQueryCursor(req.GetString("cursor", "")),
 	))
 	if err != nil {
 		return toolErr(err), nil
@@ -420,6 +426,8 @@ var errPrefixes = []struct {
 	{domain.ErrInvalidPath, "invalid_path"},
 	{domain.ErrInvalidFrontMatter, "invalid_frontmatter"},
 	{domain.ErrScopeForbidden, "scope_forbidden"},
+	{domain.ErrUnavailable, "unavailable"},
+	{domain.ErrInvalidCursor, "invalid_argument"},
 }
 
 func toolErr(err error) *mcplib.CallToolResult {
