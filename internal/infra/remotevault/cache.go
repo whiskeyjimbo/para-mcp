@@ -1,6 +1,7 @@
 package remotevault
 
 import (
+	"container/list"
 	"sync"
 	"time"
 
@@ -52,33 +53,40 @@ func (c *summaryCache) invalidate() {
 	c.entries = make(map[string]summaryCacheEntry)
 }
 
-// bodyCache holds full Note objects keyed by path, with LRU-style eviction
-// when total estimated size exceeds bodyCacheMaxB.
+// bodyCache holds full Note objects keyed by path, with FIFO eviction when
+// total estimated size exceeds bodyCacheMaxB. Eviction is O(1) per insert via
+// a doubly-linked list tracking insertion order.
 type bodyCache struct {
 	mu      sync.Mutex
-	entries map[string]bodyCacheEntry
+	entries map[string]*list.Element // path → list element
+	order   *list.List               // front = oldest; back = newest
 	sizeB   int
 }
 
 type bodyCacheEntry struct {
+	path   string
 	note   domain.Note
 	expiry time.Time
 	sizeB  int
 }
 
 func newBodyCache() *bodyCache {
-	return &bodyCache{entries: make(map[string]bodyCacheEntry)}
+	return &bodyCache{
+		entries: make(map[string]*list.Element),
+		order:   list.New(),
+	}
 }
 
 func (c *bodyCache) get(path string) (domain.Note, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[path]
-	if !ok || time.Now().After(e.expiry) {
-		if ok {
-			c.sizeB -= e.sizeB
-			delete(c.entries, path)
-		}
+	elem, ok := c.entries[path]
+	if !ok {
+		return domain.Note{}, false
+	}
+	e := elem.Value.(*bodyCacheEntry)
+	if time.Now().After(e.expiry) {
+		c.removeLocked(path, elem, e.sizeB)
 		return domain.Note{}, false
 	}
 	return e.note, true
@@ -88,32 +96,36 @@ func (c *bodyCache) set(path string, n domain.Note) {
 	size := len(n.Body) + len(n.ETag) + len(n.Ref.Path) + 64
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old, ok := c.entries[path]; ok {
-		c.sizeB -= old.sizeB
+	// Remove existing entry for this path if present.
+	if elem, ok := c.entries[path]; ok {
+		c.removeLocked(path, elem, elem.Value.(*bodyCacheEntry).sizeB)
 	}
-	// Evict expired entries if over budget.
-	if c.sizeB+size > bodyCacheMaxB {
-		now := time.Now()
-		for k, e := range c.entries {
-			if now.After(e.expiry) {
-				c.sizeB -= e.sizeB
-				delete(c.entries, k)
-			}
-		}
+	// Evict oldest entries until within budget (O(1) per eviction).
+	for c.sizeB+size > bodyCacheMaxB && c.order.Len() > 0 {
+		front := c.order.Front()
+		e := front.Value.(*bodyCacheEntry)
+		c.removeLocked(e.path, front, e.sizeB)
 	}
-	// If still over budget after expiry sweep, skip caching.
-	if c.sizeB+size > bodyCacheMaxB {
+	// If a single entry exceeds the budget, skip caching.
+	if size > bodyCacheMaxB {
 		return
 	}
-	c.entries[path] = bodyCacheEntry{note: n, expiry: time.Now().Add(bodyCacheTTL), sizeB: size}
+	entry := &bodyCacheEntry{path: path, note: n, expiry: time.Now().Add(bodyCacheTTL), sizeB: size}
+	elem := c.order.PushBack(entry)
+	c.entries[path] = elem
 	c.sizeB += size
 }
 
 func (c *bodyCache) invalidate(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[path]; ok {
-		c.sizeB -= e.sizeB
-		delete(c.entries, path)
+	if elem, ok := c.entries[path]; ok {
+		c.removeLocked(path, elem, elem.Value.(*bodyCacheEntry).sizeB)
 	}
+}
+
+func (c *bodyCache) removeLocked(path string, elem *list.Element, sizeB int) {
+	c.order.Remove(elem)
+	delete(c.entries, path)
+	c.sizeB -= sizeB
 }
