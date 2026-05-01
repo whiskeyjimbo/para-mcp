@@ -31,6 +31,23 @@ type handlers struct {
 	exposeAdminTools bool
 }
 
+// requireRole returns a permission_denied error result when the caller does not
+// hold at least minRole on scope. Returns nil when no RBAC registry is set
+// (personal mode) or when there is no caller in context.
+func (h *handlers) requireRole(ctx context.Context, scope domain.ScopeID, minRole rbac.Role) *mcplib.CallToolResult {
+	if h.rbacRegistry == nil {
+		return nil
+	}
+	caller, ok := auth.CallerFrom(ctx)
+	if !ok {
+		return nil
+	}
+	if !h.rbacRegistry.HasRole(caller, scope, minRole) {
+		return mcplib.NewToolResultError("permission_denied: insufficient role on scope " + scope)
+	}
+	return nil
+}
+
 func (h *handlers) publishChange(eventType string, ref domain.NoteRef) {
 	if h.events != nil {
 		h.events.Publish(NoteEvent{Type: eventType, Scope: ref.Scope, Path: ref.Path})
@@ -66,6 +83,12 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
+	// Enforce contributor-minimum on the local vault scope.
+	if scopes := h.svc.ListScopes(ctx); len(scopes) > 0 {
+		if denied := h.requireRole(ctx, scopes[0].Scope, rbac.Contributor); denied != nil {
+			return denied, nil
+		}
+	}
 	in := domain.NewCreateInput(
 		path,
 		domain.NewFrontMatter(
@@ -90,6 +113,9 @@ func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolReques
 	if errResult != nil {
 		return errResult, nil
 	}
+	if denied := h.requireRole(ctx, ref.Scope, rbac.Contributor); denied != nil {
+		return denied, nil
+	}
 	body, err := req.RequireString("body")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
@@ -106,6 +132,9 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 	ref, errResult := requireNoteRef(req)
 	if errResult != nil {
 		return errResult, nil
+	}
+	if denied := h.requireRole(ctx, ref.Scope, rbac.Contributor); denied != nil {
+		return denied, nil
 	}
 	raw, ok := req.GetArguments()["fields"]
 	if !ok {
@@ -127,6 +156,9 @@ func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*m
 	ref, errResult := requireNoteRef(req)
 	if errResult != nil {
 		return errResult, nil
+	}
+	if denied := h.requireRole(ctx, ref.Scope, rbac.Contributor); denied != nil {
+		return denied, nil
 	}
 	newPath, err := req.RequireString("new_path")
 	if err != nil {
@@ -164,6 +196,9 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 	if errResult != nil {
 		return errResult, nil
 	}
+	if denied := h.requireRole(ctx, ref.Scope, rbac.Contributor); denied != nil {
+		return denied, nil
+	}
 	if err := h.svc.Delete(ctx, ref, req.GetBool("soft", true), req.GetString("if_match", "")); err != nil {
 		return toolErr(ctx, err), nil
 	}
@@ -179,6 +214,10 @@ func (h *handlers) notePromote(ctx context.Context, req mcplib.CallToolRequest) 
 	toScope, err := req.RequireString("to_scope")
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
+	}
+	// Promote requires Lead on the destination scope.
+	if denied := h.requireRole(ctx, domain.ScopeID(toScope), rbac.Lead); denied != nil {
+		return denied, nil
 	}
 	in := domain.PromoteInput{
 		Ref:            ref,
