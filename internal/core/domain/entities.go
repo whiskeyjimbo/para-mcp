@@ -153,6 +153,16 @@ type MutationResult struct {
 	ETag    string
 }
 
+// PromoteInput is the input for note_promote.
+type PromoteInput struct {
+	Ref            NoteRef
+	ToScope        ScopeID
+	IfMatch        string
+	KeepSource     bool
+	OnConflict     string // "error" | "overwrite"
+	IdempotencyKey string
+}
+
 // BatchUpdateBodyInput is one item in a notes_update_batch request.
 type BatchUpdateBodyInput struct {
 	Path    string

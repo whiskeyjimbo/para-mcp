@@ -133,12 +133,16 @@ func (s *NoteService) Move(ctx context.Context, ref domain.NoteRef, newPath stri
 	return s.vault.Move(ctx, np.Storage, npNew.Storage, ifMatch)
 }
 
-func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool) error {
+func (s *NoteService) Delete(ctx context.Context, ref domain.NoteRef, soft bool, ifMatch string) error {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
 		return err
 	}
-	return s.vault.Delete(ctx, np.Storage, soft)
+	return s.vault.Delete(ctx, np.Storage, soft, ifMatch)
+}
+
+func (s *NoteService) Promote(_ context.Context, in domain.PromoteInput) (domain.MutationResult, error) {
+	return domain.MutationResult{}, fmt.Errorf("%w: note_promote from scope %q to %q requires FederationService", domain.ErrScopeForbidden, in.Ref.Scope, in.ToScope)
 }
 
 func (s *NoteService) Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error) {

@@ -3,7 +3,9 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 
@@ -13,37 +15,62 @@ import (
 
 const maxCursorOffset = 500
 
+// TombstoneStore records deleted notes so stale summary caches cannot resurface them.
+// Keys are (NoteRef, NoteID); Contains checks by NoteRef only.
+type TombstoneStore interface {
+	Add(ref domain.NoteRef, noteID string)
+	Contains(ref domain.NoteRef) bool
+}
+
 // FederationService implements ports.NoteService by fan-out across all
 // registered vaults. Single-vault operations (Get, Create, etc.) route
 // to the entry matching the request's scope; the primary (local) vault
 // is used when no scope is specified.
-//
-// Write operations (Create, UpdateBody, PatchFrontMatter, Move, Delete,
-// and their batch variants) are always local-only in Phase 3.
 type FederationService struct {
 	reg         *VaultRegistry
 	cursorKey   []byte
 	cursorStore cursorStore
+	tombstones  TombstoneStore
+	idMinter    func() string
 }
 
 // NewFederationService creates a FederationService backed by reg.
 // A 32-byte HMAC key is generated automatically; use
 // NewFederationServiceWithKey when you need a deterministic key (tests).
-func NewFederationService(reg *VaultRegistry) (*FederationService, error) {
+func NewFederationService(reg *VaultRegistry, opts ...FederationOption) (*FederationService, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("federation: generate cursor key: %w", err)
 	}
-	return NewFederationServiceWithKey(reg, key), nil
+	return NewFederationServiceWithKey(reg, key, opts...), nil
+}
+
+// FederationOption configures a FederationService.
+type FederationOption func(*FederationService)
+
+// WithTombstoneStore sets a custom tombstone store (default: in-memory).
+func WithTombstoneStore(ts TombstoneStore) FederationOption {
+	return func(f *FederationService) { f.tombstones = ts }
+}
+
+// WithFederationIDMinter overrides the note ID generator for promoted notes.
+func WithFederationIDMinter(fn func() string) FederationOption {
+	return func(f *FederationService) { f.idMinter = fn }
 }
 
 // NewFederationServiceWithKey creates a FederationService with an explicit HMAC key.
-func NewFederationServiceWithKey(reg *VaultRegistry, key []byte) *FederationService {
-	return &FederationService{
+func NewFederationServiceWithKey(reg *VaultRegistry, key []byte, opts ...FederationOption) *FederationService {
+	f := &FederationService{
 		reg:         reg,
 		cursorKey:   key,
 		cursorStore: newInMemoryCursorStore(),
+		tombstones:  newInMemoryTombstoneStore(),
+		idMinter:    defaultFederationIDMinter,
 	}
+	for _, o := range opts {
+		o(f)
+	}
+	return f
 }
 
 // localEntry returns the first registered vault entry (the local vault).
@@ -133,7 +160,11 @@ func (f *FederationService) Query(ctx context.Context, q domain.QueryRequest) (d
 			continue
 		}
 		succeeded = append(succeeded, r.scope)
-		all = append(all, r.res.Notes...)
+		for _, n := range r.res.Notes {
+			if !f.tombstones.Contains(n.Ref) {
+				all = append(all, n)
+			}
+		}
 	}
 
 	if len(succeeded) == 0 {
@@ -370,12 +401,70 @@ func (f *FederationService) Move(ctx context.Context, ref domain.NoteRef, newPat
 	return e.svc.Move(ctx, ref, newPath, ifMatch)
 }
 
-func (f *FederationService) Delete(ctx context.Context, ref domain.NoteRef, soft bool) error {
+func (f *FederationService) Delete(ctx context.Context, ref domain.NoteRef, soft bool, ifMatch string) error {
 	e, err := f.entryForRef(ref)
 	if err != nil {
 		return err
 	}
-	return e.svc.Delete(ctx, ref, soft)
+	// Fetch NoteID before deletion for tombstone keying.
+	var noteID string
+	if note, gerr := e.svc.Get(ctx, ref); gerr == nil {
+		noteID = domain.GetNoteID(note.FrontMatter)
+	}
+	if err := e.svc.Delete(ctx, ref, soft, ifMatch); err != nil {
+		return err
+	}
+	f.tombstones.Add(ref, noteID)
+	return nil
+}
+
+func (f *FederationService) Promote(ctx context.Context, in domain.PromoteInput) (domain.MutationResult, error) {
+	srcEntry, err := f.entryForRef(in.Ref)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	destRef := domain.NoteRef{Scope: in.ToScope, Path: in.Ref.Path}
+	destEntry, err := f.entryForRef(destRef)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+
+	src, err := srcEntry.svc.Get(ctx, in.Ref)
+	if err != nil {
+		return domain.MutationResult{}, err
+	}
+	if in.IfMatch != "" && src.ETag != in.IfMatch {
+		return domain.MutationResult{}, domain.ErrConflict
+	}
+
+	ci := domain.NewCreateInput(in.Ref.Path, src.FrontMatter, src.Body)
+	domain.SetNoteID(&ci.FrontMatter, f.idMinter())
+
+	res, cerr := destEntry.svc.Create(ctx, ci)
+	if cerr != nil {
+		if !isConflict(cerr) || in.OnConflict != "overwrite" {
+			return domain.MutationResult{}, cerr
+		}
+		existing, gerr := destEntry.svc.Get(ctx, destRef)
+		if gerr != nil {
+			return domain.MutationResult{}, gerr
+		}
+		res, err = destEntry.svc.UpdateBody(ctx, destRef, src.Body, existing.ETag)
+		if err != nil {
+			return domain.MutationResult{}, err
+		}
+		if _, perr := destEntry.svc.PatchFrontMatter(ctx, destRef, frontMatterFields(src.FrontMatter), res.ETag); perr != nil {
+			return domain.MutationResult{}, perr
+		}
+	}
+
+	if !in.KeepSource {
+		archPath, aerr := domain.ArchivePath(in.Ref.Path)
+		if aerr == nil {
+			_, _ = srcEntry.svc.Move(ctx, in.Ref, archPath, src.ETag)
+		}
+	}
+	return res, nil
 }
 
 func (f *FederationService) CreateBatch(ctx context.Context, inputs []domain.CreateInput, filter domain.AuthFilter) (domain.BatchResult, error) {
@@ -469,3 +558,50 @@ var _ ports.NoteService = (*FederationService)(nil)
 
 // Ensure NoteService still satisfies the port (regression guard).
 var _ ports.NoteService = (*NoteService)(nil)
+
+// --- Tombstone store ---
+
+type inMemoryTombstoneStore struct {
+	mu      sync.RWMutex
+	entries map[string]string // key: scope:path → noteID
+}
+
+func newInMemoryTombstoneStore() *inMemoryTombstoneStore {
+	return &inMemoryTombstoneStore{entries: make(map[string]string)}
+}
+
+func (s *inMemoryTombstoneStore) Add(ref domain.NoteRef, noteID string) {
+	s.mu.Lock()
+	s.entries[ref.String()] = noteID
+	s.mu.Unlock()
+}
+
+func (s *inMemoryTombstoneStore) Contains(ref domain.NoteRef) bool {
+	s.mu.RLock()
+	_, ok := s.entries[ref.String()]
+	s.mu.RUnlock()
+	return ok
+}
+
+// --- Helpers ---
+
+func defaultFederationIDMinter() string {
+	return defaultIDMinter()
+}
+
+func isConflict(err error) bool {
+	return errors.Is(err, domain.ErrConflict)
+}
+
+// frontMatterFields converts a FrontMatter into the patch fields map used by PatchFrontMatter.
+func frontMatterFields(fm domain.FrontMatter) map[string]any {
+	m := map[string]any{
+		"title":   fm.Title,
+		"status":  fm.Status,
+		"area":    fm.Area,
+		"project": fm.Project,
+		"tags":    fm.Tags,
+	}
+	maps.Copy(m, fm.Extra)
+	return m
+}

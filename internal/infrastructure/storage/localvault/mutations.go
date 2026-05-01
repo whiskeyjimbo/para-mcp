@@ -157,12 +157,21 @@ func (v *LocalVault) Move(ctx context.Context, path, newPath string, ifMatch str
 	return result, err
 }
 
-func (v *LocalVault) Delete(ctx context.Context, path string, soft bool) error {
+func (v *LocalVault) Delete(ctx context.Context, path string, soft bool, ifMatch string) error {
 	np, err := v.normalizePath(path)
 	if err != nil {
 		return err
 	}
 	return v.actors.Do(ctx, v.scope, np.Storage, func() error {
+		if ifMatch != "" {
+			note, err := v.readNote(np.Storage)
+			if err != nil {
+				return err
+			}
+			if note.ETag != ifMatch {
+				return domain.ErrConflict
+			}
+		}
 		absPath := filepath.Join(v.root, np.Storage)
 		if soft {
 			trashPath := filepath.Join(v.root, ".trash", filepath.Base(np.Storage))

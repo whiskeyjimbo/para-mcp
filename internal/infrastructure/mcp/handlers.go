@@ -9,6 +9,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
 )
 
 const (
@@ -20,6 +21,13 @@ const (
 type handlers struct {
 	svc    ports.NoteService
 	scopes ports.ScopeResolver
+	events *EventBus
+}
+
+func (h *handlers) publishChange(eventType string, ref domain.NoteRef) {
+	if h.events != nil {
+		h.events.Publish(NoteEvent{Type: eventType, Scope: ref.Scope, Path: ref.Path})
+	}
 }
 
 func requireNoteRef(req mcplib.CallToolRequest) (domain.NoteRef, *mcplib.CallToolResult) {
@@ -41,7 +49,7 @@ func (h *handlers) noteGet(ctx context.Context, req mcplib.CallToolRequest) (*mc
 	}
 	note, err := h.svc.Get(ctx, ref)
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(note)
 }
@@ -64,8 +72,9 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 	)
 	res, err := h.svc.Create(ctx, in)
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_changed", domain.NoteRef{Scope: res.Summary.Ref.Scope, Path: res.Summary.Ref.Path})
 	return jsonResult(flatMutation(res))
 }
 
@@ -80,8 +89,9 @@ func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolReques
 	}
 	res, err := h.svc.UpdateBody(ctx, ref, body, req.GetString("if_match", ""))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_changed", ref)
 	return jsonResult(flatMutation(res))
 }
 
@@ -100,8 +110,9 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 	}
 	res, err := h.svc.PatchFrontMatter(ctx, ref, fields, req.GetString("if_match", ""))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_changed", ref)
 	return jsonResult(flatMutation(res))
 }
 
@@ -116,8 +127,10 @@ func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*m
 	}
 	res, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_changed", ref)
+	h.publishChange("note_changed", domain.NoteRef{Scope: ref.Scope, Path: newPath})
 	return jsonResult(flatMutation(res))
 }
 
@@ -132,8 +145,10 @@ func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) 
 	}
 	res, err := h.svc.Move(ctx, ref, newPath, req.GetString("if_match", ""))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_changed", ref)
+	h.publishChange("note_changed", domain.NoteRef{Scope: ref.Scope, Path: newPath})
 	return jsonResult(flatMutation(res))
 }
 
@@ -142,10 +157,39 @@ func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (
 	if errResult != nil {
 		return errResult, nil
 	}
-	if err := h.svc.Delete(ctx, ref, req.GetBool("soft", true)); err != nil {
-		return toolErr(err), nil
+	if err := h.svc.Delete(ctx, ref, req.GetBool("soft", true), req.GetString("if_match", "")); err != nil {
+		return toolErr(ctx, err), nil
 	}
+	h.publishChange("note_deleted", ref)
 	return mcplib.NewToolResultText("deleted"), nil
+}
+
+func (h *handlers) notePromote(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	toScope, err := req.RequireString("to_scope")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
+	in := domain.PromoteInput{
+		Ref:            ref,
+		ToScope:        toScope,
+		IfMatch:        req.GetString("if_match", ""),
+		KeepSource:     req.GetBool("keep_source", false),
+		OnConflict:     req.GetString("on_conflict", "error"),
+		IdempotencyKey: req.GetString("idempotency_key", ""),
+	}
+	res, err := h.svc.Promote(ctx, in)
+	if err != nil {
+		return toolErr(ctx, err), nil
+	}
+	h.publishChange("note_changed", domain.NoteRef{Scope: in.ToScope, Path: in.Ref.Path})
+	if !in.KeepSource {
+		h.publishChange("note_changed", in.Ref)
+	}
+	return jsonResult(flatMutation(res))
 }
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -168,7 +212,7 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 		domain.WithQueryCursor(req.GetString("cursor", "")),
 	))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(result)
 }
@@ -180,7 +224,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	}
 	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)}, req.GetInt("limit", defaultSearchLimit))
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	if results == nil {
 		results = []domain.RankedNote{}
@@ -191,7 +235,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	stats, err := h.svc.Stats(ctx)
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(stats)
 }
@@ -204,7 +248,7 @@ func (h *handlers) notesBacklinks(ctx context.Context, req mcplib.CallToolReques
 	entries, err := h.svc.Backlinks(ctx, ref, req.GetBool("include_assets", false),
 		domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	if entries == nil {
 		entries = []domain.BacklinkEntry{}
@@ -219,7 +263,7 @@ func (h *handlers) notesRelated(ctx context.Context, req mcplib.CallToolRequest)
 	}
 	results, err := h.svc.Related(ctx, ref, req.GetInt("limit", defaultSearchLimit), domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	if results == nil {
 		results = []domain.RankedNote{}
@@ -235,7 +279,7 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 	cats := parseCategorySlice(req.GetStringSlice("categories", nil))
 	result, err := h.svc.Stale(ctx, days, cats, req.GetString("status", ""), req.GetInt("limit", defaultListLimit), domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(result)
 }
@@ -243,14 +287,14 @@ func (h *handlers) notesStale(ctx context.Context, req mcplib.CallToolRequest) (
 func (h *handlers) vaultHealth(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	health, err := h.svc.Health(ctx)
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(health)
 }
 
 func (h *handlers) vaultRescan(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	if err := h.svc.Rescan(ctx); err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return mcplib.NewToolResultText("rescan complete"), nil
 }
@@ -292,7 +336,7 @@ func (h *handlers) notesCreateBatch(ctx context.Context, req mcplib.CallToolRequ
 	}
 	result, err := h.svc.CreateBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(result)
 }
@@ -324,7 +368,7 @@ func (h *handlers) notesUpdateBatch(ctx context.Context, req mcplib.CallToolRequ
 	}
 	result, err := h.svc.UpdateBodyBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(result)
 }
@@ -360,7 +404,7 @@ func (h *handlers) notesPatchFrontMatterBatch(ctx context.Context, req mcplib.Ca
 	}
 	result, err := h.svc.PatchFrontMatterBatch(ctx, inputs, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)})
 	if err != nil {
-		return toolErr(err), nil
+		return toolErr(ctx, err), nil
 	}
 	return jsonResult(result)
 }
@@ -422,7 +466,6 @@ var errPrefixes = []struct {
 	prefix   string
 }{
 	{domain.ErrNotFound, "not_found"},
-	{domain.ErrConflict, "conflict"},
 	{domain.ErrInvalidPath, "invalid_path"},
 	{domain.ErrInvalidFrontMatter, "invalid_frontmatter"},
 	{domain.ErrScopeForbidden, "scope_forbidden"},
@@ -430,7 +473,26 @@ var errPrefixes = []struct {
 	{domain.ErrInvalidCursor, "invalid_argument"},
 }
 
-func toolErr(err error) *mcplib.CallToolResult {
+// toolErr converts a domain error to an MCP tool error result.
+// For conflict errors, use toolErr(ctx, err) to include request_id.
+func toolErr(ctx context.Context, err error) *mcplib.CallToolResult {
+	if errors.Is(err, domain.ErrConflict) {
+		type detail struct {
+			RequestID string `json:"request_id,omitempty"`
+		}
+		type conflictResp struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+			Details detail `json:"details"`
+		}
+		reqID := remotevault.RequestIDFromContext(ctx)
+		b, _ := json.Marshal(conflictResp{
+			Error:   "conflict",
+			Message: err.Error(),
+			Details: detail{RequestID: reqID},
+		})
+		return mcplib.NewToolResultError(string(b))
+	}
 	for _, e := range errPrefixes {
 		if errors.Is(err, e.sentinel) {
 			return mcplib.NewToolResultError(e.prefix + ": " + err.Error())

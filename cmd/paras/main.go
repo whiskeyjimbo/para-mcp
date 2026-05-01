@@ -17,6 +17,7 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
 	mcplayer "github.com/whiskeyjimbo/paras/internal/infrastructure/mcp"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/tombstone"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,8 +27,9 @@ type config struct {
 }
 
 type localConfig struct {
-	Vault string `yaml:"vault"`
-	Scope string `yaml:"scope"`
+	Vault          string `yaml:"vault"`
+	Scope          string `yaml:"scope"`
+	TombstoneStore string `yaml:"tombstone_store"`
 }
 
 type remoteConfig struct {
@@ -74,15 +76,20 @@ func main() {
 		scopes = []domain.ScopeID{scope}
 	}
 
-	s := mcplayer.Build(svc, mcplayer.WithScopesFunc(func(_ context.Context) []domain.ScopeID {
-		return scopes
-	}))
+	bus := mcplayer.NewEventBus()
+	s := mcplayer.Build(svc,
+		mcplayer.WithScopesFunc(func(_ context.Context) []domain.ScopeID { return scopes }),
+		mcplayer.WithEventBus(bus),
+	)
 
 	if *addr != "" {
 		mcpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
+		mux := http.NewServeMux()
+		mux.Handle("/", mcplayer.RequestIDMiddleware(mcpSrv))
+		mux.Handle("/events", mcplayer.SSEHandler(bus))
 		httpSrv := &http.Server{
 			Addr:    *addr,
-			Handler: mcplayer.RequestIDMiddleware(mcpSrv),
+			Handler: mux,
 		}
 		slog.Info("starting HTTP server", "addr", *addr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -158,10 +165,25 @@ func mustBuildFederated(ctx context.Context, cfgPath string) (ports.NoteService,
 			slog.Error("failed to register remote vault", "scope", rc.Scope, "err", err)
 			os.Exit(1)
 		}
+		if rv.Capabilities().Watch {
+			rv.StartWatch(ctx)
+			slog.Info("started SSE watch for remote vault", "scope", remoteScope)
+		}
 		slog.Info("registered remote vault", "scope", remoteScope, "url", rc.URL)
 	}
 
-	fed, err := application.NewFederationService(reg)
+	var fedOpts []application.FederationOption
+	if cfg.Local.TombstoneStore != "" {
+		ts, err := tombstone.New(cfg.Local.TombstoneStore)
+		if err != nil {
+			slog.Error("failed to open tombstone store", "path", cfg.Local.TombstoneStore, "err", err)
+			os.Exit(1)
+		}
+		fedOpts = append(fedOpts, application.WithTombstoneStore(ts))
+		slog.Info("tombstone store loaded", "path", cfg.Local.TombstoneStore)
+	}
+
+	fed, err := application.NewFederationService(reg, fedOpts...)
 	if err != nil {
 		slog.Error("failed to create federation service", "err", err)
 		os.Exit(1)

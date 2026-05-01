@@ -119,7 +119,7 @@ func TestLocalVault_Delete_Soft(t *testing.T) {
 	ctx := context.Background()
 
 	v.Create(ctx, domain.CreateInput{Path: "projects/doomed.md", Body: "bye"})
-	if err := v.Delete(ctx, "projects/doomed.md", true); err != nil {
+	if err := v.Delete(ctx, "projects/doomed.md", true, ""); err != nil {
 		t.Fatalf("Delete(soft): %v", err)
 	}
 	if _, err := v.Get(ctx, "projects/doomed.md"); err == nil {
@@ -132,7 +132,7 @@ func TestLocalVault_Delete_Hard(t *testing.T) {
 	ctx := context.Background()
 
 	v.Create(ctx, domain.CreateInput{Path: "projects/gone.md", Body: "bye"})
-	if err := v.Delete(ctx, "projects/gone.md", false); err != nil {
+	if err := v.Delete(ctx, "projects/gone.md", false, ""); err != nil {
 		t.Fatalf("Delete(hard): %v", err)
 	}
 	if _, err := v.Get(ctx, "projects/gone.md"); err == nil {

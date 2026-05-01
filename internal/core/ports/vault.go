@@ -28,7 +28,7 @@ type VaultWriter interface {
 	UpdateBody(ctx context.Context, path, body string, ifMatch string) (domain.MutationResult, error)
 	PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error)
 	Move(ctx context.Context, path, newPath string, ifMatch string) (domain.MutationResult, error)
-	Delete(ctx context.Context, path string, soft bool) error
+	Delete(ctx context.Context, path string, soft bool, ifMatch string) error
 }
 
 // VaultBatcher is the batch-mutation slice of the Vault port.

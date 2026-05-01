@@ -16,6 +16,7 @@ type buildConfig struct {
 	scopes        ports.ScopeResolver
 	serverName    string
 	serverVersion string
+	events        *EventBus
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -36,6 +37,11 @@ func WithServerName(name string) Option {
 // WithServerVersion overrides the MCP server version (default: "0.1.0").
 func WithServerVersion(v string) Option {
 	return func(c *buildConfig) { c.serverVersion = v }
+}
+
+// WithEventBus attaches an EventBus so mutation handlers publish note-change events.
+func WithEventBus(bus *EventBus) Option {
+	return func(c *buildConfig) { c.events = bus }
 }
 
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
@@ -59,7 +65,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		mcpserver.WithToolCapabilities(true),
 	)
 
-	h := &handlers{svc: svc, scopes: cfg.scopes}
+	h := &handlers{svc: svc, scopes: cfg.scopes, events: cfg.events}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
 	s.AddTool(toolNoteCreate(), h.noteCreate)
@@ -68,6 +74,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	s.AddTool(toolNoteMove(), h.noteMove)
 	s.AddTool(toolNoteArchive(), h.noteArchive)
 	s.AddTool(toolNoteDelete(), h.noteDelete)
+	s.AddTool(toolNotePromote(), h.notePromote)
 	s.AddTool(toolNotesList(), h.notesList)
 	s.AddTool(toolNotesSearch(), h.notesSearch)
 	s.AddTool(toolVaultStats(), h.vaultStats)

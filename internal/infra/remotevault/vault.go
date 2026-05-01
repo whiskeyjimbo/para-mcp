@@ -11,14 +11,12 @@ import (
 // RemoteVault implements ports.Vault against a remote paras MCP server.
 // It rewrites the remote's canonical scope name to the local scope alias
 // on every inbound response, so callers always see the local ScopeID.
-//
-// Write operations (Create, UpdateBody, etc.) are not supported in Phase 3
-// and return domain.ErrScopeForbidden.
 type RemoteVault struct {
 	// localScope is the local alias callers and the registry use.
 	localScope domain.ScopeID
 	// canonicalRemote is the scope name the remote server uses.
 	canonicalRemote string
+	baseURL         string
 	conn            *mcpConn
 	caps            domain.Capabilities
 	summaries       *summaryCache
@@ -54,6 +52,7 @@ func New(ctx context.Context, cfg Config) (*RemoteVault, error) {
 	v := &RemoteVault{
 		localScope:      cfg.LocalScope,
 		canonicalRemote: canonical,
+		baseURL:         cfg.BaseURL,
 		conn:            conn,
 		summaries:       newSummaryCache(),
 		bodies:          newBodyCache(),
@@ -164,38 +163,152 @@ func (v *RemoteVault) Rescan(ctx context.Context) error {
 	return v.conn.call(ctx, "vault_rescan", nil, nil)
 }
 
-// --- Write operations: not supported in Phase 3 ---
+// --- Write operations ---
 
-func (v *RemoteVault) Create(_ context.Context, _ domain.CreateInput) (domain.MutationResult, error) {
-	return domain.MutationResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {
+	args := map[string]any{
+		"path":    in.Path,
+		"title":   in.FrontMatter.Title,
+		"status":  in.FrontMatter.Status,
+		"area":    in.FrontMatter.Area,
+		"project": in.FrontMatter.Project,
+		"tags":    in.FrontMatter.Tags,
+		"body":    in.Body,
+	}
+	var res domain.MutationResult
+	if err := v.conn.call(ctx, "note_create", args, &res); err != nil {
+		return domain.MutationResult{}, translateErr(err)
+	}
+	res.Summary.Ref.Scope = v.localScope
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) UpdateBody(_ context.Context, _, _, _ string) (domain.MutationResult, error) {
-	return domain.MutationResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) UpdateBody(ctx context.Context, path, body, ifMatch string) (domain.MutationResult, error) {
+	args := map[string]any{
+		"scope":    v.canonicalRemote,
+		"path":     path,
+		"body":     body,
+		"if_match": ifMatch,
+	}
+	var res domain.MutationResult
+	if err := v.conn.call(ctx, "note_update_body", args, &res); err != nil {
+		return domain.MutationResult{}, translateErr(err)
+	}
+	res.Summary.Ref.Scope = v.localScope
+	v.bodies.invalidate(path)
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) PatchFrontMatter(_ context.Context, _ string, _ map[string]any, _ string) (domain.MutationResult, error) {
-	return domain.MutationResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) PatchFrontMatter(ctx context.Context, path string, fields map[string]any, ifMatch string) (domain.MutationResult, error) {
+	args := map[string]any{
+		"scope":    v.canonicalRemote,
+		"path":     path,
+		"fields":   fields,
+		"if_match": ifMatch,
+	}
+	var res domain.MutationResult
+	if err := v.conn.call(ctx, "note_patch_frontmatter", args, &res); err != nil {
+		return domain.MutationResult{}, translateErr(err)
+	}
+	res.Summary.Ref.Scope = v.localScope
+	v.bodies.invalidate(path)
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) Move(_ context.Context, _, _, _ string) (domain.MutationResult, error) {
-	return domain.MutationResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) Move(ctx context.Context, path, newPath, ifMatch string) (domain.MutationResult, error) {
+	args := map[string]any{
+		"scope":    v.canonicalRemote,
+		"path":     path,
+		"new_path": newPath,
+		"if_match": ifMatch,
+	}
+	var res domain.MutationResult
+	if err := v.conn.call(ctx, "note_move", args, &res); err != nil {
+		return domain.MutationResult{}, translateErr(err)
+	}
+	res.Summary.Ref.Scope = v.localScope
+	v.bodies.invalidate(path)
+	v.bodies.invalidate(newPath)
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) Delete(_ context.Context, _ string, _ bool) error {
-	return fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) Delete(ctx context.Context, path string, soft bool, ifMatch string) error {
+	args := map[string]any{
+		"scope":    v.canonicalRemote,
+		"path":     path,
+		"soft":     soft,
+		"if_match": ifMatch,
+	}
+	if err := v.conn.call(ctx, "note_delete", args, nil); err != nil {
+		return translateErr(err)
+	}
+	v.bodies.invalidate(path)
+	v.summaries.invalidate()
+	return nil
 }
 
-func (v *RemoteVault) CreateBatch(_ context.Context, _ []domain.CreateInput) (domain.BatchResult, error) {
-	return domain.BatchResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) CreateBatch(ctx context.Context, inputs []domain.CreateInput) (domain.BatchResult, error) {
+	notes := make([]map[string]any, len(inputs))
+	for i, in := range inputs {
+		notes[i] = map[string]any{
+			"path":    in.Path,
+			"title":   in.FrontMatter.Title,
+			"status":  in.FrontMatter.Status,
+			"area":    in.FrontMatter.Area,
+			"project": in.FrontMatter.Project,
+			"tags":    in.FrontMatter.Tags,
+			"body":    in.Body,
+		}
+	}
+	args := map[string]any{"notes": notes}
+	var res domain.BatchResult
+	if err := v.conn.call(ctx, "notes_create_batch", args, &res); err != nil {
+		return domain.BatchResult{}, translateErr(err)
+	}
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) UpdateBodyBatch(_ context.Context, _ []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
-	return domain.BatchResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) UpdateBodyBatch(ctx context.Context, items []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
+	notes := make([]map[string]any, len(items))
+	for i, it := range items {
+		notes[i] = map[string]any{
+			"scope":    v.canonicalRemote,
+			"path":     it.Path,
+			"body":     it.Body,
+			"if_match": it.IfMatch,
+		}
+	}
+	args := map[string]any{"notes": notes}
+	var res domain.BatchResult
+	if err := v.conn.call(ctx, "notes_update_batch", args, &res); err != nil {
+		return domain.BatchResult{}, translateErr(err)
+	}
+	v.summaries.invalidate()
+	return res, nil
 }
 
-func (v *RemoteVault) PatchFrontMatterBatch(_ context.Context, _ []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
-	return domain.BatchResult{}, fmt.Errorf("%w: remote vault %q is read-only in Phase 3", domain.ErrScopeForbidden, v.localScope)
+func (v *RemoteVault) PatchFrontMatterBatch(ctx context.Context, items []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
+	notes := make([]map[string]any, len(items))
+	for i, it := range items {
+		notes[i] = map[string]any{
+			"scope":    v.canonicalRemote,
+			"path":     it.Path,
+			"fields":   it.Fields,
+			"if_match": it.IfMatch,
+		}
+	}
+	args := map[string]any{"notes": notes}
+	var res domain.BatchResult
+	if err := v.conn.call(ctx, "notes_patch_frontmatter_batch", args, &res); err != nil {
+		return domain.BatchResult{}, translateErr(err)
+	}
+	v.summaries.invalidate()
+	return res, nil
 }
 
 // --- Helpers ---

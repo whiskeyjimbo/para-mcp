@@ -71,6 +71,20 @@ func toolNoteDelete() mcplib.Tool {
 		mcplib.WithString("scope", mcplib.Required()),
 		mcplib.WithString("path", mcplib.Required()),
 		mcplib.WithBoolean("soft", mcplib.Description("Soft-delete to .trash (default true)")),
+		mcplib.WithString("if_match", mcplib.Description("ETag from last read; omit to force-delete")),
+	)
+}
+
+func toolNotePromote() mcplib.Tool {
+	return mcplib.NewTool("note_promote",
+		mcplib.WithDescription("Copy a note to another scope, minting a fresh NoteID at the destination. Optionally archive or delete the source."),
+		mcplib.WithString("scope", mcplib.Required(), mcplib.Description("Source vault scope")),
+		mcplib.WithString("path", mcplib.Required(), mcplib.Description("Vault-relative path of the source note")),
+		mcplib.WithString("to_scope", mcplib.Required(), mcplib.Description("Destination vault scope")),
+		mcplib.WithString("if_match", mcplib.Description("ETag of the source note; omit to skip precondition check")),
+		mcplib.WithBoolean("keep_source", mcplib.Description("Keep the source note after promotion (default false = archive source)")),
+		mcplib.WithString("on_conflict", mcplib.Enum("error", "overwrite"), mcplib.Description("What to do if the destination path already exists (default: error)")),
+		mcplib.WithString("idempotency_key", mcplib.Description("Idempotency key for safe retry")),
 	)
 }
 

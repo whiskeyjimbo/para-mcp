@@ -39,7 +39,8 @@ type NoteWriter interface {
 	UpdateBody(ctx context.Context, ref domain.NoteRef, body, ifMatch string) (domain.MutationResult, error)
 	PatchFrontMatter(ctx context.Context, ref domain.NoteRef, fields map[string]any, ifMatch string) (domain.MutationResult, error)
 	Move(ctx context.Context, ref domain.NoteRef, newPath string, ifMatch string) (domain.MutationResult, error)
-	Delete(ctx context.Context, ref domain.NoteRef, soft bool) error
+	Delete(ctx context.Context, ref domain.NoteRef, soft bool, ifMatch string) error
+	Promote(ctx context.Context, in domain.PromoteInput) (domain.MutationResult, error)
 }
 
 // NoteBatcher is the batch-mutation slice of the NoteService port.
