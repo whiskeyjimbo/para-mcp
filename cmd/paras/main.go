@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -78,9 +79,13 @@ func main() {
 	}))
 
 	if *addr != "" {
-		httpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
+		mcpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
+		httpSrv := &http.Server{
+			Addr:    *addr,
+			Handler: mcplayer.RequestIDMiddleware(mcpSrv),
+		}
 		slog.Info("starting HTTP server", "addr", *addr)
-		if err := httpSrv.Start(*addr); err != nil {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server error", "err", err)
 			os.Exit(1)
 		}

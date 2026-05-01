@@ -45,3 +45,7 @@ func WithUpdatedAfter(t time.Time) FilterOption { return func(f *Filter) { f.Upd
 
 // WithUpdatedBefore restricts to notes updated before t.
 func WithUpdatedBefore(t time.Time) FilterOption { return func(f *Filter) { f.UpdatedBefore = &t } }
+
+// WithScopes restricts the query to the given scope IDs (client-side selector;
+// AllowedScopes remains the server-side authorization ceiling).
+func WithScopes(scopes ...ScopeID) FilterOption { return func(f *Filter) { f.Scopes = scopes } }

@@ -197,7 +197,7 @@ func (f *FederationService) Search(ctx context.Context, text string, filter doma
 	if filter.AllowedScopes == nil {
 		return nil, errAllowedScopesNil
 	}
-	scopes := f.effectiveScopes(filter.AllowedScopes)
+	scopes := f.effectiveScopes(filter.AllowedScopes, filter.Scopes)
 
 	type result struct {
 		notes []domain.RankedNote
@@ -257,7 +257,7 @@ func (f *FederationService) Backlinks(ctx context.Context, ref domain.NoteRef, i
 	if filter.AllowedScopes == nil {
 		return nil, errAllowedScopesNil
 	}
-	scopes := f.effectiveScopes(filter.AllowedScopes)
+	scopes := f.effectiveScopes(filter.AllowedScopes, filter.Scopes)
 
 	type result struct {
 		entries []domain.BacklinkEntry
@@ -404,15 +404,30 @@ func (f *FederationService) PatchFrontMatterBatch(ctx context.Context, items []d
 
 // --- Helpers ---
 
-// effectiveScopes intersects allowed with registered scopes.
-func (f *FederationService) effectiveScopes(allowed []domain.ScopeID) []domain.ScopeID {
+// effectiveScopes intersects allowed with registered scopes, then further
+// restricts to requested when non-empty (Filter.Scopes is the client-side
+// scope selector; AllowedScopes is the server-side authorization ceiling).
+func (f *FederationService) effectiveScopes(allowed, requested []domain.ScopeID) []domain.ScopeID {
 	out := make([]domain.ScopeID, 0, len(allowed))
 	for _, sc := range allowed {
 		if _, ok := f.reg.EntryFor(sc); ok {
 			out = append(out, sc)
 		}
 	}
-	return out
+	if len(requested) == 0 {
+		return out
+	}
+	req := make(map[domain.ScopeID]bool, len(requested))
+	for _, sc := range requested {
+		req[sc] = true
+	}
+	filtered := out[:0]
+	for _, sc := range out {
+		if req[sc] {
+			filtered = append(filtered, sc)
+		}
+	}
+	return filtered
 }
 
 // resolveScopesAndOffsets decodes the cursor (if present) to get the sticky
@@ -441,7 +456,7 @@ func (f *FederationService) resolveScopesAndOffsets(q domain.QueryRequest) ([]do
 	if q.Offset > maxCursorOffset {
 		return nil, nil, fmt.Errorf("%w: offset %d exceeds maximum %d", domain.ErrInvalidCursor, q.Offset, maxCursorOffset)
 	}
-	scopes := f.effectiveScopes(q.AllowedScopes)
+	scopes := f.effectiveScopes(q.AllowedScopes, q.Filter.Scopes)
 	offsets := make(map[domain.ScopeID]int, len(scopes))
 	for _, sc := range scopes {
 		offsets[sc] = q.Offset
