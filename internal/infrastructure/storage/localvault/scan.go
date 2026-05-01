@@ -58,7 +58,8 @@ func (v *LocalVault) indexNote(absPath string, np domain.NormalizedPath) {
 
 func (v *LocalVault) upsertWithLinks(indexKey, storagePath string, s domain.NoteSummary, links []noteutil.OutLink) {
 	v.cache.Set(indexKey, s)
-	v.graph.Upsert(storagePath, links)
+	old := v.graph.Links(storagePath)
+	v.graph.UpsertDiff(storagePath, old, links)
 }
 
 func (v *LocalVault) removeNoteFromAllIndexes(indexKey, storagePath string) {

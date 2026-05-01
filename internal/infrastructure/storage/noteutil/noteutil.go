@@ -285,6 +285,76 @@ func (g *BacklinkGraph) Upsert(storagePath string, links []OutLink) {
 	}
 }
 
+// UpsertDiff updates the backlink index by diffing old and new outbound links,
+// touching only the changed entries. When old == new, no modifications are made.
+func (g *BacklinkGraph) UpsertDiff(storagePath string, old, new []OutLink) {
+	if len(old) == 0 && len(new) == 0 {
+		return
+	}
+
+	// Build sets for O(1) membership checks.
+	oldSet := make(map[string]bool, len(old))
+	for _, l := range old {
+		oldSet[l.TargetKey] = true
+	}
+	newSet := make(map[string]bool, len(new))
+	for _, l := range new {
+		newSet[l.TargetKey] = true
+	}
+
+	// Fast path: link sets are identical.
+	if len(old) == len(new) {
+		same := true
+		for k := range oldSet {
+			if !newSet[k] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return
+		}
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Remove backlinks for links that were dropped.
+	for _, l := range old {
+		if !newSet[l.TargetKey] {
+			srcs := g.backlinks[l.TargetKey]
+			out := srcs[:0]
+			for _, s := range srcs {
+				if s.Path != storagePath {
+					out = append(out, s)
+				}
+			}
+			if len(out) == 0 {
+				delete(g.backlinks, l.TargetKey)
+			} else {
+				g.backlinks[l.TargetKey] = out
+			}
+		}
+	}
+
+	// Add backlinks for links that were added.
+	for _, l := range new {
+		if !oldSet[l.TargetKey] {
+			g.backlinks[l.TargetKey] = append(g.backlinks[l.TargetKey], BacklinkSrc{
+				Path:    storagePath,
+				IsAsset: l.IsAsset,
+			})
+		}
+	}
+
+	// Update the outLinks index.
+	if len(new) == 0 {
+		delete(g.outLinks, storagePath)
+	} else {
+		g.outLinks[storagePath] = new
+	}
+}
+
 // Remove removes all outbound links for storagePath from the graph.
 func (g *BacklinkGraph) Remove(storagePath string) {
 	g.mu.Lock()
