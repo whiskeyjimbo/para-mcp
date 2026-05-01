@@ -115,13 +115,23 @@ func (v *RemoteVault) Get(ctx context.Context, path string) (domain.Note, error)
 }
 
 func (v *RemoteVault) Query(ctx context.Context, q domain.QueryRequest) (domain.QueryResult, error) {
+	key := queryCacheKey(q)
+	if cached, ok := v.summaries.get(key); ok {
+		return cached, nil
+	}
 	args := queryRequestToArgs(v.canonicalRemote, q)
 	var result domain.QueryResult
 	if err := v.conn.call(ctx, "notes_list", args, &result); err != nil {
 		return domain.QueryResult{}, translateErr(err)
 	}
 	v.rewriteScopes(result.Notes)
+	v.summaries.set(key, result)
 	return result, nil
+}
+
+func queryCacheKey(q domain.QueryRequest) string {
+	b, _ := json.Marshal(q)
+	return string(b)
 }
 
 func (v *RemoteVault) Search(ctx context.Context, text string, filter domain.Filter, limit int) ([]domain.RankedNote, error) {
