@@ -2,6 +2,7 @@ package localvault
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -292,5 +293,30 @@ func TestCheckSymlinks_NonExistentPath(t *testing.T) {
 	vault := t.TempDir()
 	if err := checkSymlinks(vault, "projects/new-note.md"); err != nil {
 		t.Fatalf("non-existent path should not error: %v", err)
+	}
+}
+
+// BenchmarkCreateBatch_FTSNoBackpressure verifies that 100 concurrent FTS Add
+// calls via CreateBatch do not block on FTS channel backpressure. The index
+// channel has capacity 512; 100 items must enqueue without stalling.
+func BenchmarkCreateBatch_FTSNoBackpressure(b *testing.B) {
+	v, err := New("personal", b.TempDir())
+	if err != nil {
+		b.Fatalf("New: %v", err)
+	}
+	b.Cleanup(func() { _ = v.Close() })
+
+	inputs := make([]domain.CreateInput, 100)
+	for i := range inputs {
+		inputs[i] = domain.CreateInput{
+			Path: fmt.Sprintf("note%03d.md", i),
+			Body: "benchmark body content for fts indexing",
+		}
+	}
+
+	ctx := context.Background()
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = v.CreateBatch(ctx, inputs)
 	}
 }

@@ -171,21 +171,23 @@ func ParseLinks(body string) []OutLink {
 func LinkMatchKeys(path string) []string {
 	base := filepath.Base(path)
 	ext := filepath.Ext(base)
-	noExt := strings.TrimSuffix(base, ext)
-	noExtPath := strings.TrimSuffix(path, ext)
-	candidates := []string{
-		strings.ToLower(noExt),
-		strings.ToLower(base),
-		strings.ToLower(noExtPath),
-		strings.ToLower(path),
+	k0 := strings.ToLower(strings.TrimSuffix(base, ext))
+	k1 := strings.ToLower(base)
+	k2 := strings.ToLower(strings.TrimSuffix(path, ext))
+	k3 := strings.ToLower(path)
+
+	keys := make([]string, 0, 4)
+	if k0 != "" {
+		keys = append(keys, k0)
 	}
-	seen := make(map[string]bool, len(candidates))
-	keys := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		if c != "" && !seen[c] {
-			seen[c] = true
-			keys = append(keys, c)
-		}
+	if k1 != k0 && k1 != "" {
+		keys = append(keys, k1)
+	}
+	if k2 != k0 && k2 != k1 && k2 != "" {
+		keys = append(keys, k2)
+	}
+	if k3 != k0 && k3 != k1 && k3 != k2 && k3 != "" {
+		keys = append(keys, k3)
 	}
 	return keys
 }

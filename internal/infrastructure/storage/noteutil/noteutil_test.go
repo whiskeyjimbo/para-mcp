@@ -1,8 +1,54 @@
 package noteutil
 
 import (
+	"slices"
 	"testing"
 )
+
+func TestLinkMatchKeys_PathWithExtension(t *testing.T) {
+	keys := LinkMatchKeys("projects/my-note.md")
+	want := []string{"my-note", "my-note.md", "projects/my-note", "projects/my-note.md"}
+	if !slices.Equal(keys, want) {
+		t.Errorf("LinkMatchKeys = %v, want %v", keys, want)
+	}
+}
+
+func TestLinkMatchKeys_RootFile(t *testing.T) {
+	// File at vault root: noExtPath == noExt, path == base → two unique keys.
+	keys := LinkMatchKeys("note.md")
+	want := []string{"note", "note.md"}
+	if !slices.Equal(keys, want) {
+		t.Errorf("LinkMatchKeys = %v, want %v", keys, want)
+	}
+}
+
+func TestLinkMatchKeys_NoExtension(t *testing.T) {
+	// No extension: noExt == base, noExtPath == path → two unique keys.
+	keys := LinkMatchKeys("projects/ROADMAP")
+	want := []string{"roadmap", "projects/roadmap"}
+	if !slices.Equal(keys, want) {
+		t.Errorf("LinkMatchKeys = %v, want %v", keys, want)
+	}
+}
+
+func TestLinkMatchKeys_NoDuplicates(t *testing.T) {
+	for _, path := range []string{"a.md", "b/c.md", "noext", "x/y/z.txt"} {
+		keys := LinkMatchKeys(path)
+		seen := make(map[string]bool)
+		for _, k := range keys {
+			if seen[k] {
+				t.Errorf("path=%q: duplicate key %q in %v", path, k, keys)
+			}
+			seen[k] = true
+		}
+	}
+}
+
+func BenchmarkLinkMatchKeys(b *testing.B) {
+	for b.Loop() {
+		LinkMatchKeys("projects/my-project/roadmap.md")
+	}
+}
 
 func link(key string) OutLink { return OutLink{TargetKey: key} }
 
