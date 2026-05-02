@@ -132,6 +132,24 @@ func (s *PgVectorStore) Tombstone(ctx context.Context, ids []string) error {
 	return err
 }
 
+// ListTombstoned returns up to limit IDs of soft-deleted records for the sweeper.
+func (s *PgVectorStore) ListTombstoned(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT id FROM vector_records WHERE tombstoned = TRUE LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // pgVector formats a float32 slice as a pgvector literal string.
 func pgVector(v []float32) string {
 	if len(v) == 0 {

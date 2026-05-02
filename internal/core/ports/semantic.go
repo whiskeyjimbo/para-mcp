@@ -23,6 +23,8 @@ type VectorStore interface {
 	Search(ctx context.Context, query []float32, filter domain.AuthFilter, k int) ([]domain.VectorHit, error)
 	Delete(ctx context.Context, ids []string) error
 	Tombstone(ctx context.Context, ids []string) error
+	// ListTombstoned returns up to limit IDs of soft-deleted records, used by the sweeper.
+	ListTombstoned(ctx context.Context, limit int) ([]string, error)
 }
 
 // Summarizer generates DerivedMetadata for a note body.

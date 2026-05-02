@@ -163,6 +163,24 @@ func (s *SqliteVecStore) Tombstone(ctx context.Context, ids []string) error {
 	return err
 }
 
+// ListTombstoned returns up to limit IDs of soft-deleted records for the sweeper.
+func (s *SqliteVecStore) ListTombstoned(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT id FROM vec_meta WHERE tombstoned = 1 LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // inList builds SQL IN placeholders and args for a slice.
 func inList[T any](items []T) (string, []any) {
 	args := make([]any, len(items))
