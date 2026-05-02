@@ -33,7 +33,7 @@ func TestBodyCache_EvictsOldestOnBudgetExceeded(t *testing.T) {
 
 	// Insert 1000 entries each using 1 KiB of body.
 	body := string(make([]byte, 1024))
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		path := string(rune('a'+i%26)) + ".md"
 		c.set(path, makeNote(path, body))
 	}
@@ -58,7 +58,7 @@ func TestBodyCache_FIFOEviction(t *testing.T) {
 	perEntry := noteSize(probe)
 	capacity := bodyCacheMaxB / perEntry
 
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		path := fmt.Sprintf("n%05d.md", i)
 		c.set(path, makeNote(path, body))
 	}

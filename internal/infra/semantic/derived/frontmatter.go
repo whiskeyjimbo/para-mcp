@@ -128,9 +128,9 @@ func (s *FrontmatterStore) IsEditedByUser(_ context.Context, noteID string) (boo
 // The value is expected to be a JSON-encoded string.
 func parseDerivedBlock(content string) (*domain.DerivedMetadata, error) {
 	const prefix = "derived: "
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			raw := strings.TrimPrefix(line, prefix)
+	for line := range strings.SplitSeq(content, "\n") {
+		if after, ok := strings.CutPrefix(line, prefix); ok {
+			raw := after
 			var meta domain.DerivedMetadata
 			if err := json.Unmarshal([]byte(raw), &meta); err != nil {
 				return nil, fmt.Errorf("parse derived block: %w", err)
@@ -153,12 +153,12 @@ func injectDerived(content string, meta *domain.DerivedMetadata) (string, error)
 		return "---\n" + line + "\n---\n\n" + content, nil
 	}
 	rest := content[3:]
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
+	before, after, ok := strings.Cut(rest, "\n---")
+	if !ok {
 		return "", errors.New("malformed front matter: no closing ---")
 	}
-	fmBody := rest[:end]
-	afterFM := rest[end+4:] // skip "\n---"
+	fmBody := before
+	afterFM := after // skip "\n---"
 
 	lines := strings.Split(fmBody, "\n")
 	filtered := make([]string, 0, len(lines)+1)

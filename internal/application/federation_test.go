@@ -1050,7 +1050,7 @@ func TestFederation_IdempotencyCache_BoundedSize(t *testing.T) {
 
 	// Fill beyond maxSize via direct storeIdempotency calls.
 	overflow := idempotencyMaxSize + 100
-	for i := 0; i < overflow; i++ {
+	for i := range overflow {
 		fed.storeIdempotency(fmt.Sprintf("key-%d", i), domain.MutationResult{})
 	}
 
