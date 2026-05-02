@@ -2,6 +2,7 @@ package semantic_test
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -263,13 +264,7 @@ func TestPipelineDeleteTombstones(t *testing.T) {
 	vs.mu.Lock()
 	tombstoned := vs.tombstoned
 	vs.mu.Unlock()
-	found := false
-	for _, id := range tombstoned {
-		if id == "note-4" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(tombstoned, "note-4")
 	if !found {
 		t.Error("note-4 not tombstoned after delete event")
 	}
