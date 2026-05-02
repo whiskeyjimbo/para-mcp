@@ -2,6 +2,7 @@ package semantic_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/paras/internal/core/ports"
 	"github.com/whiskeyjimbo/paras/internal/infra/semantic"
 	"github.com/whiskeyjimbo/paras/internal/infra/semantic/tombstone"
 )
@@ -322,5 +324,157 @@ func TestPipelineEmbedConcurrencyLimited(t *testing.T) {
 
 	if got := int(atomic.LoadInt32(&emb.peak)); got > maxEmbed {
 		t.Errorf("peak concurrent embeds = %d, want <= %d", got, maxEmbed)
+	}
+}
+
+// flakyEmbedder fails the first `failFirst` calls then succeeds.
+type flakyEmbedder struct {
+	dims      int
+	failFirst int
+	calls     atomic.Int32
+}
+
+func (e *flakyEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	n := int(e.calls.Add(1))
+	if n <= e.failFirst {
+		return nil, errors.New("transient embed error")
+	}
+	out := make([][]float32, len(texts))
+	for i := range out {
+		out[i] = make([]float32, e.dims)
+	}
+	return out, nil
+}
+func (e *flakyEmbedder) Dims() int         { return e.dims }
+func (e *flakyEmbedder) ModelName() string { return "stub" }
+
+// flakySummarizer fails the first `failFirst` calls then succeeds.
+type flakySummarizer struct {
+	failFirst int
+	calls     atomic.Int32
+}
+
+func (s *flakySummarizer) Summarize(_ context.Context, _ domain.NoteRef, _ string) (*domain.DerivedMetadata, error) {
+	n := int(s.calls.Add(1))
+	if n <= s.failFirst {
+		return nil, errors.New("transient summarize error")
+	}
+	return &domain.DerivedMetadata{Summary: "stub", Purpose: "stub"}, nil
+}
+
+func makePipelineRetry(t *testing.T, emb ports.Embedder, sum ports.Summarizer, vs *stubVS, ds *stubDS, cfg semantic.Config) *semantic.Pipeline {
+	t.Helper()
+	purger := tombstone.New(vs, ds, tombstone.Config{StartupSweepMax: 100})
+	return semantic.NewPipeline(emb, vs, sum, ds, purger, cfg)
+}
+
+func TestPipelineEmbedTransientErrorRetries(t *testing.T) {
+	emb := &flakyEmbedder{dims: 4, failFirst: 2}
+	sum := &countingSummarizer{}
+	vs := newStubVS()
+	ds := newStubDS()
+
+	p := makePipelineRetry(t, emb, sum, vs, ds, semantic.Config{
+		BodyDebounce:     5 * time.Millisecond,
+		MaxRetryAttempts: 3,
+		RetryBaseDelay:   1 * time.Millisecond,
+	})
+
+	p.Submit(context.Background(), semantic.NoteEvent{
+		NoteID: "note-r1",
+		Ref:    domain.NoteRef{Scope: "s", Path: "a.md"},
+		Body:   "body",
+		Kind:   semantic.ChangeBody,
+	})
+	time.Sleep(150 * time.Millisecond)
+
+	// embed should have been called 3 times (2 failures + 1 success).
+	if got := int(emb.calls.Load()); got != 3 {
+		t.Errorf("embed called %d times, want 3 (2 transient failures + 1 success)", got)
+	}
+	if got := sum.summarizeCalls(); got != 1 {
+		t.Errorf("summarize called %d times, want 1", got)
+	}
+}
+
+func TestPipelineEmbedPermanentErrorFails(t *testing.T) {
+	emb := &flakyEmbedder{dims: 4, failFirst: 99}
+	sum := &countingSummarizer{}
+	vs := newStubVS()
+	ds := newStubDS()
+
+	p := makePipelineRetry(t, emb, sum, vs, ds, semantic.Config{
+		BodyDebounce:     5 * time.Millisecond,
+		MaxRetryAttempts: 3,
+		RetryBaseDelay:   1 * time.Millisecond,
+	})
+
+	p.Submit(context.Background(), semantic.NoteEvent{
+		NoteID: "note-r2",
+		Ref:    domain.NoteRef{Scope: "s", Path: "a.md"},
+		Body:   "body",
+		Kind:   semantic.ChangeBody,
+	})
+	time.Sleep(150 * time.Millisecond)
+
+	// All 3 attempts exhausted; summarize never called.
+	if got := int(emb.calls.Load()); got != 3 {
+		t.Errorf("embed called %d times, want 3 (max retry attempts)", got)
+	}
+	if got := sum.summarizeCalls(); got != 0 {
+		t.Errorf("summarize called %d times after embed permanent failure, want 0", got)
+	}
+}
+
+func TestPipelineSummarizeTransientErrorRetries(t *testing.T) {
+	emb := newEmbedder(4)
+	sum := &flakySummarizer{failFirst: 1}
+	vs := newStubVS()
+	ds := newStubDS()
+
+	p := makePipelineRetry(t, emb, sum, vs, ds, semantic.Config{
+		BodyDebounce:     5 * time.Millisecond,
+		MaxRetryAttempts: 3,
+		RetryBaseDelay:   1 * time.Millisecond,
+	})
+
+	p.Submit(context.Background(), semantic.NoteEvent{
+		NoteID: "note-r3",
+		Ref:    domain.NoteRef{Scope: "s", Path: "a.md"},
+		Body:   "body",
+		Kind:   semantic.ChangeBody,
+	})
+	time.Sleep(150 * time.Millisecond)
+
+	if got := int(sum.calls.Load()); got != 2 {
+		t.Errorf("summarize called %d times, want 2 (1 transient failure + 1 success)", got)
+	}
+}
+
+func TestPipelineRetryRespectsShutdown(t *testing.T) {
+	emb := &flakyEmbedder{dims: 4, failFirst: 99} // always fails
+	sum := &countingSummarizer{}
+	vs := newStubVS()
+	ds := newStubDS()
+
+	p := makePipelineRetry(t, emb, sum, vs, ds, semantic.Config{
+		BodyDebounce:     5 * time.Millisecond,
+		MaxRetryAttempts: 5,
+		RetryBaseDelay:   50 * time.Millisecond,
+	})
+
+	p.Submit(context.Background(), semantic.NoteEvent{
+		NoteID: "note-r4",
+		Ref:    domain.NoteRef{Scope: "s", Path: "a.md"},
+		Body:   "body",
+		Kind:   semantic.ChangeBody,
+	})
+	time.Sleep(20 * time.Millisecond) // let debounce fire and first embed fail
+	start := time.Now()
+	p.Close()
+	// With 5 retries at 50ms base, a full retry loop would take 50+100+200+400ms = 750ms.
+	// Close should abort the retry wait; expect it resolves within 100ms.
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Errorf("Close took %v, expected retry to abort quickly on shutdown", elapsed)
 	}
 }

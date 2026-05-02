@@ -18,6 +18,12 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/infra/semantic/tombstone"
 )
 
+// Embedder is an alias for the ports interface, exposed so tests can satisfy it without importing ports.
+type Embedder = ports.Embedder
+
+// Summarizer is an alias for the ports interface, exposed so tests can satisfy it without importing ports.
+type Summarizer = ports.Summarizer
+
 // ChangeKind describes what changed in a note event.
 type ChangeKind int
 
@@ -41,6 +47,8 @@ type Config struct {
 	MaxConcurrentSummaries  int
 	BodyDebounce            time.Duration
 	CurrentSchema           int
+	MaxRetryAttempts        int           // max embed/summarize attempts per event (default 3)
+	RetryBaseDelay          time.Duration // initial backoff before first retry (default 500ms)
 }
 
 func (c *Config) applyDefaults() {
@@ -52,6 +60,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.BodyDebounce <= 0 {
 		c.BodyDebounce = 5 * time.Minute
+	}
+	if c.MaxRetryAttempts <= 0 {
+		c.MaxRetryAttempts = 3
+	}
+	if c.RetryBaseDelay <= 0 {
+		c.RetryBaseDelay = 500 * time.Millisecond
 	}
 }
 
@@ -174,11 +188,16 @@ func (p *Pipeline) runBodyPipeline(ctx context.Context, event NoteEvent, bodyHas
 	if err := p.embedSem.Acquire(p.done, 1); err != nil {
 		return fmt.Errorf("pipeline shutting down before embed %q: %w", event.NoteID, err)
 	}
-	vecs, err := p.embedder.Embed(ctx, chunks)
-	p.embedSem.Release(1)
-	if err != nil {
+	var vecs [][]float32
+	if err := retryWithBackoff(p.done, p.cfg.MaxRetryAttempts, p.cfg.RetryBaseDelay, func() error {
+		var e error
+		vecs, e = p.embedder.Embed(ctx, chunks)
+		return e
+	}); err != nil {
+		p.embedSem.Release(1)
 		return fmt.Errorf("pipeline embed %q: %w", event.NoteID, err)
 	}
+	p.embedSem.Release(1)
 
 	records := make([]domain.VectorRecord, len(chunks))
 	for i, chunk := range chunks {
@@ -197,11 +216,16 @@ func (p *Pipeline) runBodyPipeline(ctx context.Context, event NoteEvent, bodyHas
 	if err := p.summarySem.Acquire(p.done, 1); err != nil {
 		return fmt.Errorf("pipeline shutting down before summarize %q: %w", event.NoteID, err)
 	}
-	meta, err := p.summarizer.Summarize(ctx, event.Ref, event.Body)
-	p.summarySem.Release(1)
-	if err != nil {
+	var meta *domain.DerivedMetadata
+	if err := retryWithBackoff(p.done, p.cfg.MaxRetryAttempts, p.cfg.RetryBaseDelay, func() error {
+		var e error
+		meta, e = p.summarizer.Summarize(ctx, event.Ref, event.Body)
+		return e
+	}); err != nil {
+		p.summarySem.Release(1)
 		return fmt.Errorf("pipeline summarize %q: %w", event.NoteID, err)
 	}
+	p.summarySem.Release(1)
 
 	meta.EmbedModel = p.embedder.ModelName()
 	meta.BodyHash = bodyHash
@@ -224,6 +248,31 @@ func (p *Pipeline) processFrontmatter(ctx context.Context, event NoteEvent) erro
 		return p.processBody(ctx, event)
 	}
 	return nil
+}
+
+const maxBackoffDelay = 30 * time.Second
+
+// retryWithBackoff calls fn up to maxAttempts times with exponential backoff.
+// It stops early if ctx is cancelled between attempts.
+func retryWithBackoff(ctx context.Context, maxAttempts int, base time.Duration, fn func() error) error {
+	var err error
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			delay := min(base<<(attempt-1), maxBackoffDelay)
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return ctx.Err()
+			case <-t.C:
+			}
+		}
+		err = fn()
+		if err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // hashBody returns a truncated hex SHA-256 of the body for idempotency keying.
