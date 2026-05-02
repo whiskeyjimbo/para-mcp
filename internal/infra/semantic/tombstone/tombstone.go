@@ -12,12 +12,17 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/infra/semantic/derived"
 )
 
-const defaultStartupSweepMax = 10_000
+const (
+	defaultStartupSweepMax    = 10_000
+	defaultSweepFailureWindow = 24 * time.Hour
+)
 
 // Config controls sweeper behaviour.
 type Config struct {
-	StartupSweepMax int           // max tombstones to process per startup sweep (default 10k)
-	OrphanMaxAge    time.Duration // min tombstone age before hard-delete (default 0 = immediate)
+	StartupSweepMax    int                                             // max tombstones to process per startup sweep (default 10k)
+	OrphanMaxAge       time.Duration                                   // min tombstone age before hard-delete (default 0 = immediate)
+	SweepFailureWindow time.Duration                                   // how long continuous sweep failures must persist before escalation (default 24h)
+	OnSweepDegraded    func(firstFailedAt time.Time, failureCount int) // called once the window is exceeded; nil disables
 }
 
 // externalItem is a queued vendor-side purge task.
@@ -38,6 +43,10 @@ type Purger struct {
 	// tombstoneIndex is a simplified in-memory index for sweeper: id → tombstoneTime.
 	// A production implementation would persist this in the sidecar DB.
 	tombstoneIndex map[string]time.Time
+
+	// sweep failure tracking — protected by mu.
+	sweepFirstFailedAt time.Time
+	sweepFailureCount  int
 }
 
 // New creates a Purger.
@@ -97,12 +106,43 @@ func (p *Purger) Tombstone(ctx context.Context, noteID string) error {
 	return nil
 }
 
+// onSweepError records a sweep failure and fires OnSweepDegraded if the failure window is exceeded.
+func (p *Purger) onSweepError(now time.Time) {
+	window := p.cfg.SweepFailureWindow
+	if window <= 0 {
+		window = defaultSweepFailureWindow
+	}
+
+	p.mu.Lock()
+	if p.sweepFirstFailedAt.IsZero() {
+		p.sweepFirstFailedAt = now
+	}
+	p.sweepFailureCount++
+	exceeded := now.Sub(p.sweepFirstFailedAt) >= window
+	firstAt := p.sweepFirstFailedAt
+	count := p.sweepFailureCount
+	p.mu.Unlock()
+
+	if exceeded && p.cfg.OnSweepDegraded != nil {
+		p.cfg.OnSweepDegraded(firstAt, count)
+	}
+}
+
+// onSweepSuccess resets sweep failure tracking after a successful sweep.
+func (p *Purger) onSweepSuccess() {
+	p.mu.Lock()
+	p.sweepFirstFailedAt = time.Time{}
+	p.sweepFailureCount = 0
+	p.mu.Unlock()
+}
+
 // Sweep removes orphan vectors by querying the VectorStore for tombstoned records.
 // It processes at most StartupSweepMax records per call.
 // Returns the number of records swept.
 func (p *Purger) Sweep(ctx context.Context) (int, error) {
 	candidates, err := p.vs.ListTombstoned(ctx, p.cfg.StartupSweepMax)
 	if err != nil {
+		p.onSweepError(time.Now())
 		return 0, err
 	}
 
@@ -123,6 +163,7 @@ func (p *Purger) Sweep(ctx context.Context) (int, error) {
 	p.mu.Unlock()
 
 	if len(toDelete) == 0 {
+		p.onSweepSuccess()
 		return 0, nil
 	}
 
@@ -133,8 +174,10 @@ func (p *Purger) Sweep(ctx context.Context) (int, error) {
 			p.tombstoneIndex[id] = now
 		}
 		p.mu.Unlock()
+		p.onSweepError(now)
 		return 0, err
 	}
 
+	p.onSweepSuccess()
 	return len(toDelete), nil
 }

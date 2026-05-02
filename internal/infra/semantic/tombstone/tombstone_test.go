@@ -2,7 +2,9 @@ package tombstone_test
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,10 +18,19 @@ type stubVectorStore struct {
 	mu         sync.Mutex
 	records    map[string]bool // id → exists
 	tombstoned map[string]bool
+	listErr    atomic.Pointer[error]
 }
 
 func newStubVS() *stubVectorStore {
 	return &stubVectorStore{records: map[string]bool{}, tombstoned: map[string]bool{}}
+}
+
+func (s *stubVectorStore) setListErr(err error) {
+	if err == nil {
+		s.listErr.Store(nil)
+	} else {
+		s.listErr.Store(&err)
+	}
 }
 func (s *stubVectorStore) Upsert(_ context.Context, recs []domain.VectorRecord) error {
 	s.mu.Lock()
@@ -50,6 +61,9 @@ func (s *stubVectorStore) Tombstone(_ context.Context, ids []string) error {
 	return nil
 }
 func (s *stubVectorStore) ListTombstoned(_ context.Context, limit int) ([]string, error) {
+	if ep := s.listErr.Load(); ep != nil {
+		return nil, *ep
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var ids []string
@@ -205,5 +219,82 @@ func TestSweeperStartupBoundedByMax(t *testing.T) {
 	}
 	if swept > 5 {
 		t.Errorf("sweep processed %d items, expected <= 5", swept)
+	}
+}
+
+func TestSweeperEscalatesAfterFailureWindow(t *testing.T) {
+	vs := newStubVS()
+	ds := newStubDS()
+	vs.setListErr(errors.New("db error"))
+
+	var escalated atomic.Bool
+	purger := tombstone.New(vs, ds, tombstone.Config{
+		StartupSweepMax:    10,
+		SweepFailureWindow: 1 * time.Millisecond,
+		OnSweepDegraded: func(_ time.Time, _ int) {
+			escalated.Store(true)
+		},
+	})
+
+	purger.Sweep(context.Background()) //nolint:errcheck
+	time.Sleep(5 * time.Millisecond)
+	purger.Sweep(context.Background()) //nolint:errcheck
+
+	if !escalated.Load() {
+		t.Error("expected vault_health escalation after failure window exceeded")
+	}
+}
+
+func TestSweeperDoesNotEscalateBeforeWindow(t *testing.T) {
+	vs := newStubVS()
+	ds := newStubDS()
+	vs.setListErr(errors.New("db error"))
+
+	var escalated atomic.Bool
+	purger := tombstone.New(vs, ds, tombstone.Config{
+		StartupSweepMax:    10,
+		SweepFailureWindow: 1 * time.Hour,
+		OnSweepDegraded: func(_ time.Time, _ int) {
+			escalated.Store(true)
+		},
+	})
+
+	purger.Sweep(context.Background()) //nolint:errcheck
+	purger.Sweep(context.Background()) //nolint:errcheck
+
+	if escalated.Load() {
+		t.Error("escalation triggered before failure window elapsed")
+	}
+}
+
+func TestSweeperResetsFailureStateOnSuccess(t *testing.T) {
+	vs := newStubVS()
+	ds := newStubDS()
+
+	var escalateCount atomic.Int32
+	purger := tombstone.New(vs, ds, tombstone.Config{
+		StartupSweepMax:    10,
+		SweepFailureWindow: 1 * time.Millisecond,
+		OnSweepDegraded: func(_ time.Time, _ int) {
+			escalateCount.Add(1)
+		},
+	})
+
+	// Fail past the window → escalation fires.
+	vs.setListErr(errors.New("db error"))
+	purger.Sweep(context.Background()) //nolint:errcheck
+	time.Sleep(5 * time.Millisecond)
+	purger.Sweep(context.Background()) //nolint:errcheck
+
+	// Success resets failure state.
+	vs.setListErr(nil)
+	purger.Sweep(context.Background()) //nolint:errcheck
+
+	// Fail again — window has not elapsed since reset, no escalation.
+	vs.setListErr(errors.New("db error"))
+	purger.Sweep(context.Background()) //nolint:errcheck
+
+	if got := escalateCount.Load(); got != 1 {
+		t.Errorf("expected 1 escalation, got %d", got)
 	}
 }
