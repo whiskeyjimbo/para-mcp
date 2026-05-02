@@ -49,6 +49,21 @@ func NewSidecarStore(ctx context.Context, dsn string) (*SidecarStore, error) {
 // Close closes the underlying connection pool.
 func (s *SidecarStore) Close() { s.pool.Close() }
 
+// GetByRef retrieves DerivedMetadata by scope + path.
+func (s *SidecarStore) GetByRef(ctx context.Context, ref domain.NoteRef) (*domain.DerivedMetadata, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT data FROM derived_metadata WHERE scope = $1 AND path = $2`, ref.Scope, ref.Path)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return nil, fmt.Errorf("sidecar get-by-ref %s: %w", ref, mapPgNotFound(err))
+	}
+	var meta domain.DerivedMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, fmt.Errorf("sidecar parse %s: %w", ref, err)
+	}
+	return &meta, nil
+}
+
 // Get retrieves DerivedMetadata by noteID.
 func (s *SidecarStore) Get(ctx context.Context, noteID string) (*domain.DerivedMetadata, error) {
 	row := s.pool.QueryRow(ctx,

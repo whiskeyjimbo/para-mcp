@@ -23,6 +23,7 @@ type buildConfig struct {
 	rbacRegistry             *rbac.Registry
 	exposeAdminTools         bool
 	requirePromotionApproval bool
+	semanticEnricher         SemanticEnricher
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -73,6 +74,12 @@ func WithRequirePromotionApproval(v bool) Option {
 	return func(c *buildConfig) { c.requirePromotionApproval = v }
 }
 
+// WithSemanticEnricher attaches a SemanticEnricher that populates Derived and
+// IndexState on mutation responses. Pass nil to disable enrichment (default).
+func WithSemanticEnricher(e SemanticEnricher) Option {
+	return func(c *buildConfig) { c.semanticEnricher = e }
+}
+
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 })
@@ -102,6 +109,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		rbacRegistry:             cfg.rbacRegistry,
 		exposeAdminTools:         cfg.exposeAdminTools,
 		requirePromotionApproval: cfg.requirePromotionApproval,
+		semanticEnricher:         cfg.semanticEnricher,
 	}
 
 	s.AddTool(toolNoteGet(), h.noteGet)

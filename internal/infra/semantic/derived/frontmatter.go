@@ -31,6 +31,18 @@ func NewFrontmatterStore(vaultDir string) *FrontmatterStore {
 	return &FrontmatterStore{root: vaultDir, index: map[string]string{}}
 }
 
+// GetByRef reads DerivedMetadata directly from the file at ref.Path.
+func (s *FrontmatterStore) GetByRef(_ context.Context, ref domain.NoteRef) (*domain.DerivedMetadata, error) {
+	content, err := os.ReadFile(filepath.Join(s.root, filepath.FromSlash(ref.Path)))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return parseDerivedBlock(string(content))
+}
+
 // Get reads DerivedMetadata from the derived: block in the markdown file.
 // Returns domain.ErrNotFound if the block is absent.
 func (s *FrontmatterStore) Get(_ context.Context, noteID string) (*domain.DerivedMetadata, error) {

@@ -19,6 +19,7 @@ const (
 // Store is the port for reading and writing DerivedMetadata.
 type Store interface {
 	Get(ctx context.Context, noteID string) (*domain.DerivedMetadata, error)
+	GetByRef(ctx context.Context, ref domain.NoteRef) (*domain.DerivedMetadata, error)
 	Set(ctx context.Context, noteID string, ref domain.NoteRef, meta *domain.DerivedMetadata) error
 	IsEditedByUser(ctx context.Context, noteID string) (bool, error)
 }

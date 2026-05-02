@@ -148,6 +148,9 @@ func (s *stubDS) Set(_ context.Context, id string, _ domain.NoteRef, m *domain.D
 	s.records[id] = m
 	return nil
 }
+func (s *stubDS) GetByRef(_ context.Context, _ domain.NoteRef) (*domain.DerivedMetadata, error) {
+	return nil, domain.ErrNotFound
+}
 func (s *stubDS) IsEditedByUser(_ context.Context, _ string) (bool, error) { return false, nil }
 
 // ---
