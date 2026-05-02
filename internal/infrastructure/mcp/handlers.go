@@ -30,6 +30,7 @@ type handlers struct {
 	rbacRegistry             *rbac.Registry
 	exposeAdminTools         bool
 	requirePromotionApproval bool
+	semanticEnricher         SemanticEnricher // optional; nil disables semantic enrichment
 }
 
 // requireRole returns a permission_denied error result when the caller does not
@@ -106,7 +107,7 @@ func (h *handlers) noteCreate(ctx context.Context, req mcplib.CallToolRequest) (
 		return toolErr(ctx, err), nil
 	}
 	h.publishChange("note_changed", domain.NoteRef{Scope: res.Summary.Ref.Scope, Path: res.Summary.Ref.Path})
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -126,7 +127,7 @@ func (h *handlers) noteUpdateBody(ctx context.Context, req mcplib.CallToolReques
 		return toolErr(ctx, err), nil
 	}
 	h.publishChange("note_changed", ref)
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -150,7 +151,7 @@ func (h *handlers) notePatchFrontMatter(ctx context.Context, req mcplib.CallTool
 		return toolErr(ctx, err), nil
 	}
 	h.publishChange("note_changed", ref)
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) noteReplace(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -178,7 +179,7 @@ func (h *handlers) noteReplace(ctx context.Context, req mcplib.CallToolRequest) 
 		return toolErr(ctx, err), nil
 	}
 	h.publishChange("note_changed", ref)
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -199,7 +200,7 @@ func (h *handlers) noteMove(ctx context.Context, req mcplib.CallToolRequest) (*m
 	}
 	h.publishChange("note_changed", ref)
 	h.publishChange("note_changed", domain.NoteRef{Scope: ref.Scope, Path: newPath})
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -217,7 +218,7 @@ func (h *handlers) noteArchive(ctx context.Context, req mcplib.CallToolRequest) 
 	}
 	h.publishChange("note_changed", ref)
 	h.publishChange("note_changed", domain.NoteRef{Scope: ref.Scope, Path: newPath})
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) noteDelete(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -270,7 +271,7 @@ func (h *handlers) notePromote(ctx context.Context, req mcplib.CallToolRequest) 
 	if !in.KeepSource {
 		h.publishChange("note_changed", in.Ref)
 	}
-	return jsonResult(flatMutation(res))
+	return jsonResult(flatMutation(ctx, res, h.semanticEnricher))
 }
 
 func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -515,15 +516,58 @@ func stringSliceVal(m map[string]any, key string) []string {
 	return nil
 }
 
-// mutationResult flattens a MutationResult into a single JSON object, keeping
-// all summary fields at the top level alongside the ETag concurrency token.
-type mutationResult struct {
-	domain.NoteSummary
-	ETag string `json:"ETag"`
+// SemanticEnricher populates Derived and IndexState on a NoteSummary after a mutation.
+// The implementation looks up the derived metadata store by ref; pass nil to skip enrichment.
+type SemanticEnricher interface {
+	Enrich(ctx context.Context, ref domain.NoteRef, sum *domain.NoteSummary)
 }
 
-func flatMutation(r domain.MutationResult) mutationResult {
-	return mutationResult{NoteSummary: r.Summary, ETag: r.ETag}
+// mutationResult flattens a MutationResult into a single JSON object, keeping
+// all summary fields at the top level alongside the ETag concurrency token and
+// optional semantic fields.
+type mutationResult struct {
+	domain.NoteSummary
+	ETag                string `json:"ETag"`
+	Generated           bool   `json:"generated,omitempty"`
+	Warning             string `json:"_warning,omitempty"`
+	IndexStateExplainer string `json:"index_state_explainer,omitempty"`
+}
+
+const generatedWarning = "This response includes AI-generated content (summary, entities, suggested tags). Review before relying on it."
+
+func flatMutation(ctx context.Context, r domain.MutationResult, enr SemanticEnricher) mutationResult {
+	sum := r.Summary
+	mr := mutationResult{NoteSummary: sum, ETag: r.ETag}
+	if enr == nil {
+		return mr
+	}
+	enr.Enrich(ctx, r.Summary.Ref, &mr.NoteSummary)
+	if mr.Derived != nil {
+		mr.Generated = true
+		mr.Warning = generatedWarning
+	}
+	if mr.IndexState != domain.IndexStateIndexed && mr.IndexState != "" {
+		mr.IndexStateExplainer = indexStateExplainer(mr.IndexState)
+	}
+	return mr
+}
+
+// indexStateExplainer returns a human-readable reason for non-indexed states.
+func indexStateExplainer(s domain.IndexState) string {
+	switch s {
+	case domain.IndexStatePending:
+		return "Note is queued for indexing and has not yet been processed by the semantic pipeline."
+	case domain.IndexStateFailed:
+		return "Semantic indexing failed after retries. Check logs for the embedding or summarisation error."
+	case domain.IndexStateSkippedShort:
+		return "Note body is too short to embed meaningfully and was skipped by the pipeline."
+	case domain.IndexStateSkippedUserEdited:
+		return "Derived metadata was edited by the user and will not be overwritten by the pipeline."
+	case domain.IndexStateTombstoned:
+		return "Note has been deleted and its vector records are marked for removal."
+	default:
+		return ""
+	}
 }
 
 func jsonResult(v any) (*mcplib.CallToolResult, error) {
