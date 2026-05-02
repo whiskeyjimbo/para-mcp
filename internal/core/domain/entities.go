@@ -111,6 +111,8 @@ type DerivedMetadata struct {
 	GeneratedAt   time.Time `json:"generated_at"`
 	SchemaVersion int       `json:"schema_version"`
 	EditedByUser  bool      `json:"edited_by_user,omitempty"`
+	// BodyHash is the truncated SHA-256 of the note body at derivation time, used for idempotency.
+	BodyHash string `json:"body_hash,omitempty"`
 }
 
 // EntityKind classifies an extracted entity.
