@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -18,12 +19,28 @@ import (
 	mcplayer "github.com/whiskeyjimbo/paras/internal/infrastructure/mcp"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/tombstone"
+	"github.com/whiskeyjimbo/paras/internal/server/auth"
 	"gopkg.in/yaml.v3"
 )
 
 type config struct {
 	Local   localConfig    `yaml:"local"`
 	Remotes []remoteConfig `yaml:"remotes"`
+	Server  serverConfig   `yaml:"server"`
+}
+
+type serverConfig struct {
+	Auth authConfig `yaml:"auth"`
+}
+
+// authConfig holds server-mode authentication settings.
+// Mode selects the auth mechanism: "bearer", "oidc", or "" (no auth — dev only).
+// BearerTokens maps raw token strings to CallerIdentity names (used when Mode="bearer").
+// JWKSEndpoint is the OIDC provider's JWKS URL (used when Mode="oidc").
+type authConfig struct {
+	Mode         string            `yaml:"mode"`
+	BearerTokens map[string]string `yaml:"bearer_tokens"`
+	JWKSEndpoint string            `yaml:"jwks_endpoint"`
 }
 
 type localConfig struct {
@@ -44,6 +61,9 @@ func main() {
 	configFile := flag.String("config", "", "path to federation config file (YAML)")
 	addr := flag.String("addr", "", "HTTP listen address for server mode (e.g. :8080)")
 	requirePromotionApproval := flag.Bool("require-promotion-approval", false, "gate note_promote with pending_approval (ADR-0006)")
+	authMode := flag.String("auth-mode", "", "auth mechanism for server mode: bearer or oidc (empty = no auth)")
+	jwksEndpoint := flag.String("jwks-endpoint", "", "OIDC JWKS endpoint URL (required when --auth-mode=oidc)")
+	bearerTokensFile := flag.String("bearer-tokens-file", "", "JSON file mapping bearer token strings to caller identities (required when --auth-mode=bearer)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -52,10 +72,12 @@ func main() {
 	var (
 		svc    ports.NoteService
 		scopes []domain.ScopeID
+		cfg    config
 	)
 
 	if *configFile != "" {
-		svc, scopes = mustBuildFederated(ctx, *configFile)
+		cfg = mustParseConfig(*configFile)
+		svc, scopes = mustBuildFederatedFromConfig(ctx, cfg)
 	} else {
 		if *vaultRoot == "" {
 			fmt.Fprintln(os.Stderr, "error: --vault or --config is required")
@@ -85,15 +107,38 @@ func main() {
 	)
 
 	if *addr != "" {
+		// Resolve auth config: flags take precedence over YAML server.auth block.
+		ac := cfg.Server.Auth
+		if *authMode != "" {
+			ac.Mode = *authMode
+		}
+		if *jwksEndpoint != "" {
+			ac.JWKSEndpoint = *jwksEndpoint
+		}
+		if *bearerTokensFile != "" {
+			tokens, err := loadBearerTokensFile(*bearerTokensFile)
+			if err != nil {
+				slog.Error("failed to load bearer tokens file", "path", *bearerTokensFile, "err", err)
+				os.Exit(1)
+			}
+			ac.BearerTokens = tokens
+		}
+
+		authMW, err := buildAuthMiddleware(ac)
+		if err != nil {
+			slog.Error("invalid auth configuration", "err", err)
+			os.Exit(1)
+		}
+
 		mcpSrv := mcpserver.NewStreamableHTTPServer(s, mcpserver.WithStateLess(true))
 		mux := http.NewServeMux()
-		mux.Handle("/", mcplayer.ScopeMemoMiddleware(mcplayer.RequestIDMiddleware(mcpSrv)))
+		mux.Handle("/", authMW(mcplayer.ScopeMemoMiddleware(mcplayer.RequestIDMiddleware(mcpSrv))))
 		mux.Handle("/events", mcplayer.SSEHandler(bus))
 		httpSrv := &http.Server{
 			Addr:    *addr,
 			Handler: mux,
 		}
-		slog.Info("starting HTTP server", "addr", *addr)
+		slog.Info("starting HTTP server", "addr", *addr, "auth", ac.Mode)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server error", "err", err)
 			os.Exit(1)
@@ -108,9 +153,7 @@ func main() {
 	}
 }
 
-// mustBuildFederated loads the config, wires the VaultRegistry and FederationService,
-// and returns the service plus the full list of registered scope IDs (for the scope resolver).
-func mustBuildFederated(ctx context.Context, cfgPath string) (ports.NoteService, []domain.ScopeID) {
+func mustParseConfig(cfgPath string) config {
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		slog.Error("failed to read config", "path", cfgPath, "err", err)
@@ -121,6 +164,12 @@ func mustBuildFederated(ctx context.Context, cfgPath string) (ports.NoteService,
 		slog.Error("failed to parse config", "path", cfgPath, "err", err)
 		os.Exit(1)
 	}
+	return cfg
+}
+
+// mustBuildFederatedFromConfig wires the VaultRegistry and FederationService from a parsed config,
+// and returns the service plus the full list of registered scope IDs (for the scope resolver).
+func mustBuildFederatedFromConfig(ctx context.Context, cfg config) (ports.NoteService, []domain.ScopeID) {
 	if cfg.Local.Vault == "" {
 		slog.Error("config missing local.vault")
 		os.Exit(1)
@@ -196,4 +245,45 @@ func mustBuildFederated(ctx context.Context, cfgPath string) (ports.NoteService,
 		allScopes = append(allScopes, e.ScopeID)
 	}
 	return fed, allScopes
+}
+
+// buildAuthMiddleware returns an HTTP middleware based on ac.Mode.
+// Mode "bearer" requires BearerTokens to be populated.
+// Mode "oidc" requires JWKSEndpoint to be set.
+// Empty mode returns an identity middleware (no auth — dev/stdio only).
+func buildAuthMiddleware(ac authConfig) (func(http.Handler) http.Handler, error) {
+	switch ac.Mode {
+	case "bearer":
+		if len(ac.BearerTokens) == 0 {
+			return nil, fmt.Errorf("auth-mode=bearer requires bearer_tokens to be configured")
+		}
+		store := make(auth.MapTokenStore, len(ac.BearerTokens))
+		for token, identity := range ac.BearerTokens {
+			store[token] = auth.CallerIdentity(identity)
+		}
+		return auth.BearerMiddleware(auth.WithTokenStore(store)), nil
+	case "oidc":
+		if ac.JWKSEndpoint == "" {
+			return nil, fmt.Errorf("auth-mode=oidc requires jwks_endpoint to be configured")
+		}
+		return auth.OIDCMiddleware(auth.WithJWKSEndpoint(ac.JWKSEndpoint)), nil
+	case "":
+		slog.Warn("no auth mode configured for HTTP server; all requests will be accepted")
+		return func(next http.Handler) http.Handler { return next }, nil
+	default:
+		return nil, fmt.Errorf("unknown auth-mode %q; valid values: bearer, oidc", ac.Mode)
+	}
+}
+
+// loadBearerTokensFile reads a JSON file mapping bearer token strings to caller identity names.
+func loadBearerTokensFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var tokens map[string]string
+	if err := json.Unmarshal(data, &tokens); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return tokens, nil
 }
