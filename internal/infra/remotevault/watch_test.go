@@ -87,6 +87,44 @@ func TestStartWatch_InvalidatesCachesOnDisconnect(t *testing.T) {
 	}
 }
 
+// TestStartWatch_TearsDownOnStalledStream: a server that establishes the SSE
+// connection but never sends any frames (silently dead TCP, NAT timeout)
+// must trigger a client-side teardown within ~2× streamReadTimeout, after
+// which the watcher reconnects.
+func TestStartWatch_TearsDownOnStalledStream(t *testing.T) {
+	prev := streamReadTimeout
+	streamReadTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { streamReadTimeout = prev })
+
+	var attempts atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Hold the connection open without sending any frames.
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	v := newRemoteVaultForWatch(ts.URL)
+	stop := v.StartWatch(t.Context())
+	defer stop()
+
+	// Expect the watcher to make ≥2 connection attempts within a small
+	// multiple of streamReadTimeout — meaning the first connection was torn
+	// down by the stall detector.
+	deadline := time.Now().Add(2 * time.Second)
+	for attempts.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if attempts.Load() < 2 {
+		t.Fatalf("stalled stream not torn down: attempts=%d", attempts.Load())
+	}
+}
+
 // TestStartWatch_DoesNotInvalidateOnInitialDialFailure: if WatchEvents never
 // successfully connects (remote down at boot), caches must NOT be wiped — that
 // would permanently disable caching during a brief outage.

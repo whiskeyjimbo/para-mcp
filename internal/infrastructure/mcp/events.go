@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
+
+// DefaultHeartbeatInterval is the cadence at which SSEHandler emits a comment
+// frame on idle streams so clients can detect silently-dead connections.
+const DefaultHeartbeatInterval = 15 * time.Second
 
 // NoteEvent describes a change to a note published after successful mutations.
 type NoteEvent struct {
@@ -18,14 +23,37 @@ type NoteEvent struct {
 
 // EventBus is a fan-out pub/sub bus for note change events.
 type EventBus struct {
-	mu          sync.Mutex
-	subscribers map[int]chan NoteEvent
-	next        int
+	mu                sync.Mutex
+	subscribers       map[int]chan NoteEvent
+	next              int
+	heartbeatInterval time.Duration
+}
+
+// EventBusOption configures an EventBus at construction time.
+type EventBusOption func(*EventBus)
+
+// WithHeartbeatInterval overrides the SSE heartbeat cadence (default 15s).
+func WithHeartbeatInterval(d time.Duration) EventBusOption {
+	return func(b *EventBus) { b.heartbeatInterval = d }
 }
 
 // NewEventBus creates a new EventBus.
-func NewEventBus() *EventBus {
-	return &EventBus{subscribers: make(map[int]chan NoteEvent)}
+func NewEventBus(opts ...EventBusOption) *EventBus {
+	b := &EventBus{
+		subscribers:       make(map[int]chan NoteEvent),
+		heartbeatInterval: DefaultHeartbeatInterval,
+	}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+// HeartbeatInterval reports the configured heartbeat cadence.
+func (b *EventBus) HeartbeatInterval() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.heartbeatInterval
 }
 
 // Publish broadcasts an event to all current subscribers (non-blocking; slow subscribers drop events).
@@ -85,10 +113,16 @@ func SSEHandler(bus *EventBus) http.Handler {
 		_, _ = fmt.Fprintf(w, ": connected\n\n")
 		flusher.Flush()
 
+		ticker := time.NewTicker(bus.HeartbeatInterval())
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-r.Context().Done():
 				return
+			case <-ticker.C:
+				_, _ = fmt.Fprintf(w, ": ping\n\n")
+				flusher.Flush()
 			case e := <-ch:
 				if scopeFilter != "" && string(e.Scope) != scopeFilter {
 					continue

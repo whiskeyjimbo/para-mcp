@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// streamReadTimeout bounds how long the client will wait for any frame on an
+// SSE stream before tearing the connection down. Sized to ~2× the server's
+// default heartbeat interval (mcp.DefaultHeartbeatInterval = 15s) so a normally
+// idle stream punctuated by heartbeats stays connected indefinitely. Defined
+// as a package var to allow tests to inject a short timeout.
+var streamReadTimeout = 30 * time.Second
+
 // sseEvent is a parsed Server-Sent Event.
 type sseEvent struct {
 	Data string
@@ -49,11 +56,15 @@ func (v *RemoteVault) WatchEvents(ctx context.Context, onEvent func(eventType, p
 	}
 }
 
-// streamSSE opens the SSE stream and reads events until the connection ends.
-// Returns connected=true once HTTP 200 is received, regardless of how the
-// stream subsequently terminates.
+// streamSSE opens the SSE stream and reads events until the connection ends or
+// the stream stalls (no frame received within streamReadTimeout). Returns
+// connected=true once HTTP 200 is received, regardless of how the stream
+// subsequently terminates.
 func (v *RemoteVault) streamSSE(ctx context.Context, url string, onEvent func(eventType, path string)) (connected bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return false, err
 	}
@@ -71,9 +82,42 @@ func (v *RemoteVault) streamSSE(ctx context.Context, url string, onEvent func(ev
 	}
 	connected = true
 
+	// Stall watchdog: any activity (real event or heartbeat comment) resets a
+	// timer; if the timer fires before the next frame arrives, cancel the
+	// stream context to tear the connection down.
+	activity := make(chan struct{}, 1)
+	watchdogDone := make(chan struct{})
+	go func() {
+		defer close(watchdogDone)
+		timer := time.NewTimer(streamReadTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(streamReadTimeout)
+			case <-timer.C:
+				cancel()
+				return
+			}
+		}
+	}()
+
 	scanner := bufio.NewScanner(resp.Body)
 	var dataLine string
 	for scanner.Scan() {
+		// Any line (data, comment heartbeat, blank separator) signals liveness.
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
 		line := scanner.Text()
 		if after, ok := strings.CutPrefix(line, "data: "); ok {
 			dataLine = after
@@ -88,17 +132,22 @@ func (v *RemoteVault) streamSSE(ctx context.Context, url string, onEvent func(ev
 			dataLine = ""
 		}
 	}
-	return connected, scanner.Err()
+	scanErr := scanner.Err()
+	cancel()
+	<-watchdogDone
+	return connected, scanErr
 }
 
 // StartWatch starts a background SSE subscriber that invalidates summary and body caches
 // on remote note changes, and clears both caches whenever a previously-successful SSE
 // connection drops (so missed events during the disconnect window cannot serve stale
-// data beyond TTL). Returns a stop function. Should only be called when
-// Capabilities().Watch is true.
+// data beyond TTL). Returns a stop function that cancels the watcher and blocks until
+// the background goroutine exits. Should only be called when Capabilities().Watch is true.
 func (v *RemoteVault) StartWatch(ctx context.Context) func() {
 	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		_ = v.WatchEvents(ctx,
 			func(eventType, path string) {
 				if path != "" {
@@ -112,5 +161,8 @@ func (v *RemoteVault) StartWatch(ctx context.Context) func() {
 			},
 		)
 	}()
-	return cancel
+	return func() {
+		cancel()
+		<-done
+	}
 }
