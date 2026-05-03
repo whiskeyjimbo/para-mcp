@@ -120,9 +120,13 @@ func toolNotesList() mcplib.Tool {
 
 func toolNotesSearch() mcplib.Tool {
 	return mcplib.NewTool("notes_search",
-		mcplib.WithDescription("Full-text BM25 search over note titles and bodies."),
+		mcplib.WithDescription("Search notes. Mode selects retrieval strategy: lexical (BM25), semantic (vector), or hybrid (RRF fusion). Defaults to hybrid when semantic infra is available, else lexical."),
 		mcplib.WithString("text", mcplib.Required(), mcplib.Description("Search query")),
 		mcplib.WithNumber("limit", mcplib.Description("Max results (default 10)")),
+		mcplib.WithString("mode",
+			mcplib.Enum(string(domain.SearchModeLexical), string(domain.SearchModeSemantic), string(domain.SearchModeHybrid)),
+			mcplib.Description("Retrieval mode: lexical|semantic|hybrid"),
+		),
 	)
 }
 

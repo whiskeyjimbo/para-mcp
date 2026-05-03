@@ -191,6 +191,9 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Aut
 	return s.vault.Search(ctx, text, filter.Filter, limit)
 }
 
+// SemanticCapable reports whether a SemanticSearcher is attached.
+func (s *NoteService) SemanticCapable() bool { return s.semanticSearcher != nil }
+
 // HybridSearch fuses BM25 (lexical) and vector results via Reciprocal Rank
 // Fusion. When no SemanticSearcher is configured, falls back to lexical-only
 // results — never errors with capability_unavailable.

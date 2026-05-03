@@ -304,7 +304,34 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
-	results, err := h.svc.Search(ctx, text, domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)}, req.GetInt("limit", defaultSearchLimit))
+	limit := req.GetInt("limit", defaultSearchLimit)
+	filter := domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)}
+
+	modeStr := req.GetString("mode", "")
+	mode := domain.SearchMode(modeStr)
+	explicit := modeStr != ""
+	if !explicit {
+		if h.svc.SemanticCapable() {
+			mode = domain.SearchModeHybrid
+		} else {
+			mode = domain.SearchModeLexical
+		}
+	}
+
+	var results []domain.RankedNote
+	switch mode {
+	case domain.SearchModeLexical:
+		results, err = h.svc.Search(ctx, text, filter, limit)
+	case domain.SearchModeSemantic:
+		results, err = h.svc.SemanticSearch(ctx, text, filter, domain.SemanticSearchOptions{Limit: limit})
+	case domain.SearchModeHybrid:
+		if explicit && !h.svc.SemanticCapable() {
+			return toolErr(ctx, domain.ErrCapabilityUnavailable), nil
+		}
+		results, err = h.svc.HybridSearch(ctx, text, filter, domain.HybridSearchOptions{Limit: limit})
+	default:
+		return mcplib.NewToolResultError("invalid_argument: mode must be lexical, semantic, or hybrid"), nil
+	}
 	if err != nil {
 		return toolErr(ctx, err), nil
 	}

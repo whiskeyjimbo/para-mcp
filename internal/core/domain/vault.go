@@ -23,7 +23,9 @@ var (
 type SearchMode string
 
 const (
-	SearchModeLexical SearchMode = "lexical"
+	SearchModeLexical  SearchMode = "lexical"
+	SearchModeSemantic SearchMode = "semantic"
+	SearchModeHybrid   SearchMode = "hybrid"
 )
 
 // SortField names the field used to order query results.

@@ -319,6 +319,17 @@ func (f *FederationService) Search(ctx context.Context, text string, filter doma
 	return all, nil
 }
 
+// SemanticCapable reports true when at least one entry's underlying service
+// has a SemanticSearcher attached.
+func (f *FederationService) SemanticCapable() bool {
+	for _, e := range f.reg.Entries() {
+		if e.svc.SemanticCapable() {
+			return true
+		}
+	}
+	return false
+}
+
 // HybridSearch fans out across the federated scopes. Each entry runs its own
 // RRF (BM25 + vector) locally; the federator merges results by score.
 func (f *FederationService) HybridSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.HybridSearchOptions) ([]domain.RankedNote, error) {

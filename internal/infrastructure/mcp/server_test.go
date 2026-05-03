@@ -248,6 +248,73 @@ func TestNotesSemanticSearch_RejectsInvalidBodyMode(t *testing.T) {
 	}
 }
 
+func TestNotesSearch_ModeRouting(t *testing.T) {
+	v, err := localvault.New("personal", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	mr, err := application.NewService(v).Create(context.Background(), domain.CreateInput{
+		Path: "projects/widgets.md", FrontMatter: domain.FrontMatter{Title: "widgets"}, Body: "widgets are nice and good",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	stub := &stubSemSearcher{hits: []domain.VectorHit{{Ref: mr.Summary.Ref, Score: 0.9}}}
+	svcCapable := application.NewService(v, application.WithSemanticSearcher(stub))
+	svcLexOnly := application.NewService(v)
+
+	resolver := ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} })
+
+	cases := []struct {
+		name       string
+		svc        ports.NoteService
+		mode       string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{"omit-mode-capable-uses-hybrid", svcCapable, "", false, ""},
+		{"omit-mode-not-capable-uses-lexical", svcLexOnly, "", false, ""},
+		{"explicit-lexical-no-cap-ok", svcLexOnly, "lexical", false, ""},
+		{"explicit-lexical-cap-ok", svcCapable, "lexical", false, ""},
+		{"explicit-semantic-no-cap-errors", svcLexOnly, "semantic", true, "capability_unavailable"},
+		{"explicit-semantic-cap-ok", svcCapable, "semantic", false, ""},
+		{"explicit-hybrid-no-cap-errors", svcLexOnly, "hybrid", true, "capability_unavailable"},
+		{"explicit-hybrid-cap-ok", svcCapable, "hybrid", false, ""},
+		{"invalid-mode-rejected", svcCapable, "weird", true, "invalid_argument"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &handlers{svc: tc.svc, scopes: resolver}
+			req := mcplib.CallToolRequest{}
+			args := map[string]any{"text": "widgets"}
+			if tc.mode != "" {
+				args["mode"] = tc.mode
+			}
+			req.Params.Arguments = args
+			res, err := h.notesSearch(context.Background(), req)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if tc.wantErr {
+				if !res.IsError {
+					t.Fatalf("expected error result")
+				}
+				text := res.Content[0].(mcplib.TextContent).Text
+				if !strings.Contains(text, tc.wantErrSub) {
+					t.Errorf("error %q does not contain %q", text, tc.wantErrSub)
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatalf("unexpected error: %v", res.Content)
+			}
+		})
+	}
+}
+
 func TestNotesSemanticSearch_RejectsBadThreshold(t *testing.T) {
 	svc := application.NewService(&scopeRecorder{}, application.WithSemanticSearcher(&stubSemSearcher{}))
 	h := &handlers{

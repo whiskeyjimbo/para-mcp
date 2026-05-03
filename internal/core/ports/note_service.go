@@ -63,6 +63,9 @@ type NoteReader interface {
 	Search(ctx context.Context, text string, filter domain.AuthFilter, limit int) ([]domain.RankedNote, error)
 	SemanticSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.SemanticSearchOptions) ([]domain.RankedNote, error)
 	HybridSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.HybridSearchOptions) ([]domain.RankedNote, error)
+	// SemanticCapable reports whether semantic-aware search modes
+	// (semantic, hybrid) are wired up on this service.
+	SemanticCapable() bool
 	Stale(ctx context.Context, days int, categories []domain.Category, status string, limit int, filter domain.AuthFilter) (domain.QueryResult, error)
 	Backlinks(ctx context.Context, ref domain.NoteRef, includeAssets bool, filter domain.AuthFilter) ([]domain.BacklinkEntry, error)
 	Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error)
