@@ -49,3 +49,11 @@ func WithUpdatedBefore(t time.Time) FilterOption { return func(f *Filter) { f.Up
 // WithScopes restricts the query to the given scope IDs (client-side selector;
 // AllowedScopes remains the server-side authorization ceiling).
 func WithScopes(scopes ...ScopeID) FilterOption { return func(f *Filter) { f.Scopes = scopes } }
+
+// WithPurpose sets the semantic purpose hint used by semantic and hybrid search.
+func WithPurpose(p string) FilterOption { return func(f *Filter) { f.Purpose = p } }
+
+// WithEntities sets the entity-name hints used by semantic and hybrid search.
+func WithEntities(entities ...string) FilterOption {
+	return func(f *Filter) { f.Entities = entities }
+}

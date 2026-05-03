@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -105,6 +107,89 @@ func TestSortSummaries_ByUpdated(t *testing.T) {
 	SortSummaries(notes, SortByUpdated, true)
 	if notes[0].Title != "A" {
 		t.Errorf("expected A first (newer) in desc, got %s", notes[0].Title)
+	}
+}
+
+func TestFilter_PurposeAndEntities_ZeroValues(t *testing.T) {
+	var f Filter
+	if f.Purpose != "" {
+		t.Errorf("zero-value Purpose should be empty, got %q", f.Purpose)
+	}
+	if f.Entities != nil {
+		t.Errorf("zero-value Entities should be nil, got %v", f.Entities)
+	}
+}
+
+func TestFilter_PurposeAndEntities_Set(t *testing.T) {
+	f := Filter{Purpose: "research", Entities: []string{"acme", "bigco"}}
+	if f.Purpose != "research" {
+		t.Errorf("Purpose = %q, want research", f.Purpose)
+	}
+	if !reflect.DeepEqual(f.Entities, []string{"acme", "bigco"}) {
+		t.Errorf("Entities = %v, want [acme bigco]", f.Entities)
+	}
+}
+
+func TestFilter_JSONRoundTrip_PreservesPurposeAndEntities(t *testing.T) {
+	in := Filter{
+		Status:   "active",
+		Purpose:  "discovery",
+		Entities: []string{"openai", "anthropic"},
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Filter
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Purpose != in.Purpose {
+		t.Errorf("Purpose round-trip: got %q, want %q", out.Purpose, in.Purpose)
+	}
+	if !reflect.DeepEqual(out.Entities, in.Entities) {
+		t.Errorf("Entities round-trip: got %v, want %v", out.Entities, in.Entities)
+	}
+	if out.Status != in.Status {
+		t.Errorf("Status (regression): got %q, want %q", out.Status, in.Status)
+	}
+}
+
+func TestFilter_UnmarshalOmittedFieldsAreZeroValued(t *testing.T) {
+	var f Filter
+	if err := json.Unmarshal([]byte(`{"Status":"active"}`), &f); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f.Purpose != "" {
+		t.Errorf("Purpose should be zero when omitted, got %q", f.Purpose)
+	}
+	if f.Entities != nil {
+		t.Errorf("Entities should be nil when omitted, got %v", f.Entities)
+	}
+	if f.Status != "active" {
+		t.Errorf("Status (regression): got %q, want active", f.Status)
+	}
+}
+
+func TestMatchesFilter_PurposeAndEntitiesAreContractOnly(t *testing.T) {
+	n := NoteSummary{Category: Projects, Status: "active"}
+	withPurpose := Filter{Purpose: "anything"}
+	if !MatchesFilter(n, withPurpose) {
+		t.Error("Purpose is contract-only at this stage; should not affect matching")
+	}
+	withEntities := Filter{Entities: []string{"anything"}}
+	if !MatchesFilter(n, withEntities) {
+		t.Error("Entities is contract-only at this stage; should not affect matching")
+	}
+}
+
+func TestNewFilter_WithPurposeAndEntities(t *testing.T) {
+	f := NewFilter(WithPurpose("research"), WithEntities("acme", "bigco"))
+	if f.Purpose != "research" {
+		t.Errorf("Purpose = %q, want research", f.Purpose)
+	}
+	if !reflect.DeepEqual(f.Entities, []string{"acme", "bigco"}) {
+		t.Errorf("Entities = %v, want [acme bigco]", f.Entities)
 	}
 }
 

@@ -82,6 +82,8 @@ type Filter struct {
 	Text            string
 	UpdatedAfter    *time.Time
 	UpdatedBefore   *time.Time
+	Purpose         string
+	Entities        []string
 }
 
 // AuthFilter pairs a content Filter with the authorization scope list.
