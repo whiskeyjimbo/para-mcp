@@ -315,6 +315,150 @@ func TestNotesSearch_ModeRouting(t *testing.T) {
 	}
 }
 
+type stubIndexStateProvider struct {
+	calls int
+	seq   []domain.IndexState
+	err   error
+}
+
+func (s *stubIndexStateProvider) IndexState(_ context.Context, _ string) (domain.IndexState, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	i := s.calls
+	s.calls++
+	if i >= len(s.seq) {
+		return s.seq[len(s.seq)-1], nil
+	}
+	return s.seq[i], nil
+}
+
+func TestWaitForIndex_CapabilityUnavailable(t *testing.T) {
+	svc := newTestService(t)
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"scope": "personal", "path": "projects/x.md"}
+	res, _ := h.waitForIndex(context.Background(), req)
+	if !res.IsError {
+		t.Fatal("expected error when no provider configured")
+	}
+	if !strings.Contains(res.Content[0].(mcplib.TextContent).Text, "capability_unavailable") {
+		t.Errorf("expected capability_unavailable, got %v", res.Content)
+	}
+}
+
+func TestWaitForIndex_ImmediateTerminalState(t *testing.T) {
+	svc := newTestService(t)
+	mr, err := svc.Create(context.Background(), domain.CreateInput{
+		Path: "projects/x.md", FrontMatter: domain.FrontMatter{Title: "x"}, Body: "x",
+	})
+	if err != nil || mr.Summary.Ref.Path == "" {
+		t.Fatalf("create: %v", err)
+	}
+	provider := &stubIndexStateProvider{seq: []domain.IndexState{domain.IndexStateIndexed}}
+	h := &handlers{
+		svc:                svc,
+		scopes:             ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+		indexStateProvider: provider,
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"scope": "personal", "path": mr.Summary.Ref.Path}
+	res, err := h.waitForIndex(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("unexpected: err=%v isErr=%v %v", err, res.IsError, res.Content)
+	}
+	var resp waitForIndexResp
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.State != domain.IndexStateIndexed {
+		t.Errorf("state: got %q, want indexed", resp.State)
+	}
+	if resp.TimedOut {
+		t.Error("should not be timed out for terminal state")
+	}
+}
+
+func TestWaitForIndex_TimeoutWhenPendingForever(t *testing.T) {
+	svc := newTestService(t)
+	mr, err := svc.Create(context.Background(), domain.CreateInput{
+		Path: "projects/x.md", FrontMatter: domain.FrontMatter{Title: "x"}, Body: "x",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	provider := &stubIndexStateProvider{seq: []domain.IndexState{domain.IndexStatePending}}
+	h := &handlers{
+		svc:                svc,
+		scopes:             ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+		indexStateProvider: provider,
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"scope":            "personal",
+		"path":             mr.Summary.Ref.Path,
+		"index_timeout_ms": float64(50),
+	}
+	res, _ := h.waitForIndex(context.Background(), req)
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	var resp waitForIndexResp
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.TimedOut {
+		t.Error("expected timed_out=true on stuck pending state")
+	}
+	if resp.State != domain.IndexStatePending {
+		t.Errorf("state: got %q, want pending", resp.State)
+	}
+}
+
+func TestWaitForIndex_TransitionsThroughPendingToIndexed(t *testing.T) {
+	svc := newTestService(t)
+	mr, err := svc.Create(context.Background(), domain.CreateInput{
+		Path: "projects/x.md", FrontMatter: domain.FrontMatter{Title: "x"}, Body: "x",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	provider := &stubIndexStateProvider{seq: []domain.IndexState{
+		domain.IndexStatePending,
+		domain.IndexStatePending,
+		domain.IndexStateIndexed,
+	}}
+	h := &handlers{
+		svc:                svc,
+		scopes:             ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+		indexStateProvider: provider,
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"scope":            "personal",
+		"path":             mr.Summary.Ref.Path,
+		"index_timeout_ms": float64(2000),
+	}
+	res, _ := h.waitForIndex(context.Background(), req)
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	var resp waitForIndexResp
+	_ = json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &resp)
+	if resp.State != domain.IndexStateIndexed {
+		t.Errorf("state: got %q, want indexed", resp.State)
+	}
+	if resp.TimedOut {
+		t.Error("should not time out when terminal reached")
+	}
+	if provider.calls < 2 {
+		t.Errorf("expected multiple poll calls, got %d", provider.calls)
+	}
+}
+
 func TestNotesSemanticSearch_RejectsBadThreshold(t *testing.T) {
 	svc := application.NewService(&scopeRecorder{}, application.WithSemanticSearcher(&stubSemSearcher{}))
 	h := &handlers{

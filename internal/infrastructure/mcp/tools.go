@@ -130,6 +130,15 @@ func toolNotesSearch() mcplib.Tool {
 	)
 }
 
+func toolWaitForIndex() mcplib.Tool {
+	return mcplib.NewTool("wait_for_index",
+		mcplib.WithDescription("Block until the given note reaches a terminal IndexState (indexed|failed|skipped) or the timeout elapses."),
+		mcplib.WithString("scope", mcplib.Required(), mcplib.Description("Scope of the note")),
+		mcplib.WithString("path", mcplib.Required(), mcplib.Description("Path of the note")),
+		mcplib.WithNumber("index_timeout_ms", mcplib.Description("Max wait in ms (default 3000, max 10000)")),
+	)
+}
+
 func toolNotesHybridSearch() mcplib.Tool {
 	return mcplib.NewTool("notes_hybrid_search",
 		mcplib.WithDescription("Hybrid BM25 + vector search fused via Reciprocal Rank Fusion. Falls back to lexical-only when semantic infra is unavailable."),

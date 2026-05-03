@@ -24,6 +24,7 @@ type buildConfig struct {
 	exposeAdminTools         bool
 	requirePromotionApproval bool
 	semanticEnricher         ports.SemanticEnricher
+	indexStateProvider       ports.IndexStateProvider
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -80,6 +81,12 @@ func WithSemanticEnricher(e ports.SemanticEnricher) Option {
 	return func(c *buildConfig) { c.semanticEnricher = e }
 }
 
+// WithIndexStateProvider attaches a provider used by the wait_for_index tool.
+// When nil (default) wait_for_index returns capability_unavailable.
+func WithIndexStateProvider(p ports.IndexStateProvider) Option {
+	return func(c *buildConfig) { c.indexStateProvider = p }
+}
+
 var personalOnly ports.ScopeResolver = ports.ScopesFunc(func(_ context.Context) []domain.ScopeID {
 	return []domain.ScopeID{"personal"}
 })
@@ -110,6 +117,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 		exposeAdminTools:         cfg.exposeAdminTools,
 		requirePromotionApproval: cfg.requirePromotionApproval,
 		semanticEnricher:         cfg.semanticEnricher,
+		indexStateProvider:       cfg.indexStateProvider,
 	}
 
 	s.AddTool(toolNoteGet(), h.noteGet)
@@ -125,6 +133,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	s.AddTool(toolNotesSearch(), h.notesSearch)
 	s.AddTool(toolNotesSemanticSearch(), h.notesSemanticSearch)
 	s.AddTool(toolNotesHybridSearch(), h.notesHybridSearch)
+	s.AddTool(toolWaitForIndex(), h.waitForIndex)
 	s.AddTool(toolVaultStats(), h.vaultStats)
 
 	s.AddTool(toolNotesBacklinks(), h.notesBacklinks)

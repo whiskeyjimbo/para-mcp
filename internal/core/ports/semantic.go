@@ -51,6 +51,13 @@ type SemanticEnricher interface {
 	Enrich(ctx context.Context, ref domain.NoteRef, sum *domain.NoteSummary)
 }
 
+// IndexStateProvider answers "what is the current semantic IndexState for this note?"
+// Implementations typically read from the derived-metadata store. wait_for_index uses
+// this to poll for a terminal state.
+type IndexStateProvider interface {
+	IndexState(ctx context.Context, noteID string) (domain.IndexState, error)
+}
+
 // SemanticSearcher runs a pure vector query and returns hits already deduplicated
 // to one-per-NoteRef with chunk-aggregated scores. Implementations are responsible
 // for embedding the query, calling VectorStore.Search, applying the threshold

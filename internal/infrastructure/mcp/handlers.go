@@ -11,6 +11,7 @@ import (
 	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 	"github.com/whiskeyjimbo/para-mcp/internal/ctxutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/waitforindex"
 	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
 	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
 	"github.com/whiskeyjimbo/para-mcp/internal/server/rbac"
@@ -30,7 +31,8 @@ type handlers struct {
 	rbacRegistry             *rbac.Registry
 	exposeAdminTools         bool
 	requirePromotionApproval bool
-	semanticEnricher         ports.SemanticEnricher // optional; nil disables semantic enrichment
+	semanticEnricher         ports.SemanticEnricher   // optional; nil disables semantic enrichment
+	indexStateProvider       ports.IndexStateProvider // optional; nil disables wait_for_index
 }
 
 // requireRole returns a permission_denied error result when the caller does not
@@ -339,6 +341,43 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 		results = []domain.RankedNote{}
 	}
 	return jsonResult(results)
+}
+
+type waitForIndexResp struct {
+	State     domain.IndexState `json:"state"`
+	Explainer string            `json:"explainer,omitempty"`
+	TimedOut  bool              `json:"timed_out,omitempty"`
+	Cancelled bool              `json:"cancelled,omitempty"`
+}
+
+func (h *handlers) waitForIndex(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	if h.indexStateProvider == nil {
+		return toolErr(ctx, domain.ErrCapabilityUnavailable), nil
+	}
+	ref, errResult := requireNoteRef(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+	note, err := h.svc.Get(ctx, ref)
+	if err != nil {
+		return toolErr(ctx, err), nil
+	}
+	noteID := domain.GetNoteID(note.FrontMatter)
+	if noteID == "" {
+		return mcplib.NewToolResultError("not_found: note has no NoteID; cannot poll index state"), nil
+	}
+	timeoutMs := req.GetInt("index_timeout_ms", 0)
+	cfg := waitforindex.DefaultConfig()
+	if timeoutMs > 0 {
+		cfg.Timeout = waitforindex.ClampTimeout(time.Duration(timeoutMs) * time.Millisecond)
+	}
+	res := waitforindex.Wait(ctx, noteID, h.indexStateProvider.IndexState, cfg)
+	return jsonResult(waitForIndexResp{
+		State:     res.State,
+		Explainer: res.Explainer,
+		TimedOut:  res.TimedOut,
+		Cancelled: res.Cancelled,
+	})
 }
 
 func (h *handlers) notesHybridSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
