@@ -124,6 +124,14 @@ func (c *bodyCache) invalidate(path string) {
 	}
 }
 
+func (c *bodyCache) invalidateAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*list.Element)
+	c.order = list.New()
+	c.sizeB = 0
+}
+
 func (c *bodyCache) removeLocked(path string, elem *list.Element, sizeB int) {
 	c.order.Remove(elem)
 	delete(c.entries, path)
