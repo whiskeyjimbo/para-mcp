@@ -8,8 +8,8 @@ import (
 
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 	_ "github.com/ncruces/go-sqlite3/driver"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 )
 
 var _ ports.VectorStore = (*SqliteVecStore)(nil)

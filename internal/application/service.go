@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 )
 
 var errAllowedScopesNil = errors.New("internal: AllowedScopes must not be nil (programmer error)")

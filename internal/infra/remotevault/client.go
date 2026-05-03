@@ -10,7 +10,7 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/whiskeyjimbo/paras/internal/ctxutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/ctxutil"
 )
 
 const requestIDHeader = "X-PARA-Request-Id"

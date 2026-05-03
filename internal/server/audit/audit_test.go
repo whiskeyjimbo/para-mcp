@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/server/audit"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
 )
 
 type memBackend struct {

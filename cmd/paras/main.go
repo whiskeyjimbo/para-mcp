@@ -12,14 +12,14 @@ import (
 	"syscall"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
-	mcplayer "github.com/whiskeyjimbo/paras/internal/infrastructure/mcp"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/tombstone"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/application"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/remotevault"
+	mcplayer "github.com/whiskeyjimbo/para-mcp/internal/infrastructure/mcp"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/tombstone"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
 	"gopkg.in/yaml.v3"
 )
 

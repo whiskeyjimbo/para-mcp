@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
 )
 
 func TestBearerMiddleware_NoToken(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/vectorstore"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/vectorstore"
 )
 
 func TestPgvectorConformance(t *testing.T) {

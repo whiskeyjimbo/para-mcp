@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/waitforindex"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/waitforindex"
 )
 
 // staticStateFunc always returns the same IndexState.

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/embedder"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/embedder"
 )
 
 // --- Voyage tests ---

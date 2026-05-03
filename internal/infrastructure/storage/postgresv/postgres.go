@@ -9,10 +9,10 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/noteutil"
 )
 
 // Option configures a PostgresVault.

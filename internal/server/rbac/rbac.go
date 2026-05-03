@@ -5,8 +5,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
 )
 
 // Role represents the access level a caller holds on a scope.

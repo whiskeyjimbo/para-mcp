@@ -3,7 +3,7 @@ package ports
 import (
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 // Doc is the document representation fed into an FTSIndex.

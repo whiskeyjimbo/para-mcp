@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 // Embedder converts text into dense vector representations.

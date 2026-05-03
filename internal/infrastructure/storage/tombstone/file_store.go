@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 // entry is one persisted tombstone record.

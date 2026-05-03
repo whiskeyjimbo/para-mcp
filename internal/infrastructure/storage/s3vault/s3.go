@@ -16,10 +16,10 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/noteutil"
 )
 
 // Option configures an S3Vault.

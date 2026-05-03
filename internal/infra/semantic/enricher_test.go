@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 type stubEnricherStore struct {
@@ -16,12 +16,15 @@ type stubEnricherStore struct {
 func (s *stubEnricherStore) GetByRef(_ context.Context, _ domain.NoteRef) (*domain.DerivedMetadata, error) {
 	return s.meta, s.err
 }
+
 func (s *stubEnricherStore) Get(_ context.Context, _ string) (*domain.DerivedMetadata, error) {
 	return nil, domain.ErrNotFound
 }
+
 func (s *stubEnricherStore) Set(_ context.Context, _ string, _ domain.NoteRef, _ *domain.DerivedMetadata) error {
 	return nil
 }
+
 func (s *stubEnricherStore) IsEditedByUser(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }

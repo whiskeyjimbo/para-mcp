@@ -14,11 +14,11 @@ import (
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/application"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/remotevault"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
 )
 
 // queryCounter wraps LocalVault and records how many times Query is called

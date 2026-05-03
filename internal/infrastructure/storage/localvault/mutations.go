@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/noteutil"
 )
 
 func (v *LocalVault) Create(ctx context.Context, in domain.CreateInput) (domain.MutationResult, error) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 )
 
 // ErrNotImplemented is returned by stub implementations pending a real backend.

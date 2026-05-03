@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/tombstone"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/tombstone"
 )
 
 // stubVault is a minimal ports.Vault for federation tests.
@@ -66,15 +66,19 @@ func (v *stubVault) Query(_ context.Context, q domain.QueryRequest) (domain.Quer
 func (v *stubVault) Get(_ context.Context, _ string) (domain.Note, error) {
 	return domain.Note{}, domain.ErrNotFound
 }
+
 func (v *stubVault) Search(_ context.Context, _ string, _ domain.Filter, _ int) ([]domain.RankedNote, error) {
 	return nil, nil
 }
+
 func (v *stubVault) Backlinks(_ context.Context, _ domain.NoteRef, _ bool, _ domain.Filter) ([]domain.BacklinkEntry, error) {
 	return nil, nil
 }
+
 func (v *stubVault) Stats(_ context.Context) (domain.VaultStats, error) {
 	return domain.VaultStats{ByCategory: map[domain.Category]int{}}, nil
 }
+
 func (v *stubVault) Health(_ context.Context) (domain.VaultHealth, error) {
 	return domain.VaultHealth{}, nil
 }
@@ -82,15 +86,19 @@ func (v *stubVault) Rescan(_ context.Context) error { return nil }
 func (v *stubVault) Create(_ context.Context, _ domain.CreateInput) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
+
 func (v *stubVault) UpdateBody(_ context.Context, _, _ string, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
+
 func (v *stubVault) PatchFrontMatter(_ context.Context, _ string, _ map[string]any, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
+
 func (v *stubVault) Replace(_ context.Context, _ string, _ map[string]any, _, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
+
 func (v *stubVault) Move(_ context.Context, _, _ string, _ string) (domain.MutationResult, error) {
 	return domain.MutationResult{}, nil
 }
@@ -98,9 +106,11 @@ func (v *stubVault) Delete(_ context.Context, _ string, _ bool, _ string) error 
 func (v *stubVault) CreateBatch(_ context.Context, _ []domain.CreateInput) (domain.BatchResult, error) {
 	return domain.BatchResult{}, nil
 }
+
 func (v *stubVault) UpdateBodyBatch(_ context.Context, _ []domain.BatchUpdateBodyInput) (domain.BatchResult, error) {
 	return domain.BatchResult{}, nil
 }
+
 func (v *stubVault) PatchFrontMatterBatch(_ context.Context, _ []domain.BatchPatchFrontMatterInput) (domain.BatchResult, error) {
 	return domain.BatchResult{}, nil
 }

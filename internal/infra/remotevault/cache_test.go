@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 func makeNote(path, body string) domain.Note {

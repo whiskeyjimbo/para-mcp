@@ -8,12 +8,12 @@ import (
 	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/ctxutil"
-	"github.com/whiskeyjimbo/paras/internal/server/audit"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
-	"github.com/whiskeyjimbo/paras/internal/server/rbac"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/ctxutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/rbac"
 )
 
 const (

@@ -11,11 +11,11 @@ import (
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/derived"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/scoring"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/tombstone"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/derived"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/scoring"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/tombstone"
 )
 
 // Embedder is an alias for the ports interface, exposed so tests can satisfy it without importing ports.

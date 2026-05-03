@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/server/cursorstore"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/cursorstore"
 )
 
 func TestInMemory_PutGet(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/whiskeyjimbo/paras
+module github.com/whiskeyjimbo/para-mcp
 
 go 1.26.2
 

@@ -5,10 +5,10 @@ import (
 	"context"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/server/audit"
-	"github.com/whiskeyjimbo/paras/internal/server/rbac"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/rbac"
 )
 
 // Option configures a Build call.

@@ -5,7 +5,7 @@ package derived
 import (
 	"context"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 // Mode selects the storage backend for DerivedMetadata.

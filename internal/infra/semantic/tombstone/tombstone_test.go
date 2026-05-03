@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/tombstone"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/tombstone"
 )
 
 // --- stub VectorStore + DerivedStore for tests ---
@@ -32,6 +32,7 @@ func (s *stubVectorStore) setListErr(err error) {
 		s.listErr.Store(&err)
 	}
 }
+
 func (s *stubVectorStore) Upsert(_ context.Context, recs []domain.VectorRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,9 +41,11 @@ func (s *stubVectorStore) Upsert(_ context.Context, recs []domain.VectorRecord) 
 	}
 	return nil
 }
+
 func (s *stubVectorStore) Search(_ context.Context, _ []float32, _ domain.AuthFilter, _ int) ([]domain.VectorHit, error) {
 	return nil, nil
 }
+
 func (s *stubVectorStore) Delete(_ context.Context, ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -52,6 +55,7 @@ func (s *stubVectorStore) Delete(_ context.Context, ids []string) error {
 	}
 	return nil
 }
+
 func (s *stubVectorStore) Tombstone(_ context.Context, ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -60,6 +64,7 @@ func (s *stubVectorStore) Tombstone(_ context.Context, ids []string) error {
 	}
 	return nil
 }
+
 func (s *stubVectorStore) ListTombstoned(_ context.Context, limit int) ([]string, error) {
 	if ep := s.listErr.Load(); ep != nil {
 		return nil, *ep
@@ -83,6 +88,7 @@ func (s *stubVectorStore) has(id string) bool {
 	defer s.mu.Unlock()
 	return s.records[id]
 }
+
 func (s *stubVectorStore) isTombstoned(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,6 +103,7 @@ type stubDerivedStore struct {
 func newStubDS() *stubDerivedStore {
 	return &stubDerivedStore{records: map[string]*domain.DerivedMetadata{}}
 }
+
 func (s *stubDerivedStore) Get(_ context.Context, id string) (*domain.DerivedMetadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,6 +112,7 @@ func (s *stubDerivedStore) Get(_ context.Context, id string) (*domain.DerivedMet
 	}
 	return nil, domain.ErrNotFound
 }
+
 func (s *stubDerivedStore) Set(_ context.Context, id string, _ domain.NoteRef, m *domain.DerivedMetadata) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,12 +123,15 @@ func (s *stubDerivedStore) Set(_ context.Context, id string, _ domain.NoteRef, m
 	s.records[id] = m
 	return nil
 }
+
 func (s *stubDerivedStore) GetByRef(_ context.Context, _ domain.NoteRef) (*domain.DerivedMetadata, error) {
 	return nil, domain.ErrNotFound
 }
+
 func (s *stubDerivedStore) IsEditedByUser(_ context.Context, _ string) (bool, error) {
 	return false, nil
 }
+
 func (s *stubDerivedStore) has(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 type scopeMemoKey struct{}

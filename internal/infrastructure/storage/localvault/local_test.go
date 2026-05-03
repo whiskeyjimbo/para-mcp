@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/application"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 func newTestVault(t *testing.T) *LocalVault {

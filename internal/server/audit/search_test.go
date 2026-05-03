@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/server/audit"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
 )
 
 func writeRows(t *testing.T, path string, rows []audit.Row) *audit.FileBackend {

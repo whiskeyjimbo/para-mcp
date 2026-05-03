@@ -8,20 +8,20 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/postgresv"
-	"github.com/whiskeyjimbo/paras/internal/server/audit"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
-	"github.com/whiskeyjimbo/paras/internal/server/rbac"
-	"os"
+	"github.com/whiskeyjimbo/para-mcp/internal/application"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/postgresv"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/audit"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/rbac"
 )
 
 // --- Shared test harness ---

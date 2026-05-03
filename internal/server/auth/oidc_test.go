@@ -12,7 +12,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
 )
 
 // testJWKS spins up an httptest server serving the public half of key as JWKS.

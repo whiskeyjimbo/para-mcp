@@ -4,7 +4,7 @@ package scoring
 import (
 	"slices"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 const (

@@ -6,7 +6,7 @@ package main
 import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 
-	"github.com/whiskeyjimbo/paras/internal/analysis/wirecheck"
+	"github.com/whiskeyjimbo/para-mcp/internal/analysis/wirecheck"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/vectorstore"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/vectorstore"
 )
 
 func TestSqliteVecConformance(t *testing.T) {

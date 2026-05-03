@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/embedder"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/embedder"
 )
 
 func ollamaEmbedResp(embedding []float32) []byte {

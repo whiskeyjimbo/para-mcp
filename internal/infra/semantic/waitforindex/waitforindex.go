@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 const (

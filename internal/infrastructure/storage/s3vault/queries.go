@@ -3,9 +3,9 @@ package s3vault
 import (
 	"context"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/noteutil"
 )
 
 func (v *S3Vault) Get(ctx context.Context, path string) (domain.Note, error) {

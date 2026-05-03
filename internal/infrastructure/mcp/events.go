@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 // NoteEvent describes a change to a note published after successful mutations.

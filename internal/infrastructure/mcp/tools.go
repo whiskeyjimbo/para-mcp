@@ -2,7 +2,7 @@ package mcp
 
 import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 func toolNoteGet() mcplib.Tool {

@@ -1,6 +1,6 @@
 SHELL    := /bin/bash
 BINARY   := paras
-MODULE   := github.com/whiskeyjimbo/paras
+MODULE   := github.com/whiskeyjimbo/para-mcp
 CMD      := ./cmd/paras
 WIRECHECK := ./cmd/wirecheck
 

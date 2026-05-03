@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
 )
 
 func newTestService(t *testing.T) *NoteService {

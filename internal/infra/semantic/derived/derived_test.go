@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/derived"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/derived"
 )
 
 func makeMeta(schemaVer int, editedByUser bool) *domain.DerivedMetadata {

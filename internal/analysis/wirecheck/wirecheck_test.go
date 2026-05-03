@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	"github.com/whiskeyjimbo/paras/internal/analysis/wirecheck"
+	"github.com/whiskeyjimbo/para-mcp/internal/analysis/wirecheck"
 )
 
 func TestWirecheck(t *testing.T) {

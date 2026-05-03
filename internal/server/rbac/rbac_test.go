@@ -3,9 +3,9 @@ package rbac_test
 import (
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/server/auth"
-	"github.com/whiskeyjimbo/paras/internal/server/rbac"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/auth"
+	"github.com/whiskeyjimbo/para-mcp/internal/server/rbac"
 )
 
 var (

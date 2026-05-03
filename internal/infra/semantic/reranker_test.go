@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic"
 )
 
 func TestStubRerankerReturnsErrNotImplemented(t *testing.T) {

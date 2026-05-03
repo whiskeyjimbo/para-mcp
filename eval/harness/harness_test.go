@@ -3,8 +3,8 @@ package harness_test
 import (
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/eval/harness"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/eval/harness"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
 )
 
 func ref(scope, path string) domain.NoteRef {

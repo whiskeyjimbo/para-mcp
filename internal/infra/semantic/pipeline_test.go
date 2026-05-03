@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/tombstone"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/tombstone"
 )
 
 // --- stubs ---
@@ -94,9 +94,11 @@ func (s *stubVS) Upsert(_ context.Context, recs []domain.VectorRecord) error {
 	}
 	return nil
 }
+
 func (s *stubVS) Search(_ context.Context, _ []float32, _ domain.AuthFilter, _ int) ([]domain.VectorHit, error) {
 	return nil, nil
 }
+
 func (s *stubVS) Delete(_ context.Context, ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,12 +107,14 @@ func (s *stubVS) Delete(_ context.Context, ids []string) error {
 	}
 	return nil
 }
+
 func (s *stubVS) Tombstone(_ context.Context, ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tombstoned = append(s.tombstoned, ids...)
 	return nil
 }
+
 func (s *stubVS) ListTombstoned(_ context.Context, limit int) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +142,7 @@ func (s *stubDS) Get(_ context.Context, id string) (*domain.DerivedMetadata, err
 	}
 	return nil, domain.ErrNotFound
 }
+
 func (s *stubDS) Set(_ context.Context, id string, _ domain.NoteRef, m *domain.DerivedMetadata) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,6 +153,7 @@ func (s *stubDS) Set(_ context.Context, id string, _ domain.NoteRef, m *domain.D
 	s.records[id] = m
 	return nil
 }
+
 func (s *stubDS) GetByRef(_ context.Context, _ domain.NoteRef) (*domain.DerivedMetadata, error) {
 	return nil, domain.ErrNotFound
 }

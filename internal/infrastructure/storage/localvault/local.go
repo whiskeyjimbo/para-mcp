@@ -10,11 +10,11 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/actor"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/index"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/noteutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/actor"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/index"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/noteutil"
 )
 
 // Option configures a LocalVault.

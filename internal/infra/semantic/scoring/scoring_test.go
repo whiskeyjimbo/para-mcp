@@ -3,8 +3,8 @@ package scoring_test
 import (
 	"testing"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/scoring"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/scoring"
 )
 
 func hit(scope, path string, chunk int, score float64) domain.VectorHit {

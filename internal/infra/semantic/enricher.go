@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/derived"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/derived"
 )
 
 // DerivedEnricher populates Derived and IndexState on a NoteSummary by looking

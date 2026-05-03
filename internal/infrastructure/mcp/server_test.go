@@ -7,11 +7,11 @@ import (
 	"time"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
-	"github.com/whiskeyjimbo/paras/internal/application"
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/ctxutil"
-	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
+	"github.com/whiskeyjimbo/para-mcp/internal/application"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/ctxutil"
+	"github.com/whiskeyjimbo/para-mcp/internal/infrastructure/storage/localvault"
 )
 
 // scopeRecorder is a ports.Vault stub that records whether Query and Search
@@ -26,9 +26,11 @@ func (r *scopeRecorder) Scope() domain.ScopeID { return "personal" }
 func (r *scopeRecorder) Capabilities() domain.Capabilities {
 	return domain.Capabilities{CaseSensitive: true}
 }
+
 func (r *scopeRecorder) Stats(_ context.Context) (domain.VaultStats, error) {
 	return domain.VaultStats{ByCategory: map[domain.Category]int{}}, nil
 }
+
 func (r *scopeRecorder) Query(_ context.Context, _ domain.QueryRequest) (domain.QueryResult, error) {
 	r.queryCalled = true
 	return domain.QueryResult{
@@ -36,6 +38,7 @@ func (r *scopeRecorder) Query(_ context.Context, _ domain.QueryRequest) (domain.
 		ScopesSucceeded: []domain.ScopeID{"personal"},
 	}, nil
 }
+
 func (r *scopeRecorder) Search(_ context.Context, _ string, _ domain.Filter, _ int) ([]domain.RankedNote, error) {
 	r.searchCalled = true
 	return nil, nil

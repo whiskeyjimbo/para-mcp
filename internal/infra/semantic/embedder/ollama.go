@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 )
 
 var _ ports.Embedder = (*OllamaEmbedder)(nil)

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whiskeyjimbo/paras/internal/infra/semantic/budget"
+	"github.com/whiskeyjimbo/para-mcp/internal/infra/semantic/budget"
 )
 
 func TestBudgetNoBreachWithinLimits(t *testing.T) {

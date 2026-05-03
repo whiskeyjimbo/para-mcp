@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](go.mod)
-[![Go Report Card](https://goreportcard.com/badge/github.com/whiskeyjimbo/paras)](https://goreportcard.com/report/github.com/whiskeyjimbo/paras)
+[![Go Report Card](https://goreportcard.com/badge/github.com/whiskeyjimbo/para-mcp)](https://goreportcard.com/report/github.com/whiskeyjimbo/para-mcp)
 
 A federation-aware [MCP](https://modelcontextprotocol.io/) server for [PARA](https://fortelabs.com/blog/para/)-structured markdown vaults.
 
@@ -55,7 +55,7 @@ Paras pushes work to the server:
 Requires Go 1.26+.
 
 ```bash
-git clone https://github.com/whiskeyjimbo/paras
+git clone https://github.com/whiskeyjimbo/para-mcp
 cd paras
 go build -o paras ./cmd/paras
 ```
@@ -63,7 +63,7 @@ go build -o paras ./cmd/paras
 Or install directly:
 
 ```bash
-go install github.com/whiskeyjimbo/paras/cmd/paras@latest
+go install github.com/whiskeyjimbo/para-mcp/cmd/paras@latest
 ```
 
 ---

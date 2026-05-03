@@ -3,8 +3,8 @@ package application
 import (
 	"fmt"
 
-	"github.com/whiskeyjimbo/paras/internal/core/domain"
-	"github.com/whiskeyjimbo/paras/internal/core/ports"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/domain"
+	"github.com/whiskeyjimbo/para-mcp/internal/core/ports"
 )
 
 // VaultEntry holds a registered vault and its per-vault service wrapper.
