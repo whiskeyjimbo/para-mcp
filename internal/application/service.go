@@ -364,8 +364,10 @@ func (s *NoteService) Backlinks(ctx context.Context, ref domain.NoteRef, include
 	return s.vault.Backlinks(ctx, ref, includeAssets, filter.Filter)
 }
 
-// Related returns notes scored by tag/area/project overlap with ref.
-// Score = 1 per shared tag + 2 if same area + 2 if same project.
+// Related returns notes related to ref. When semantic capability is available
+// it ranks by vector cosine similarity using the source note body as the query;
+// otherwise it falls back to the tag/area/project overlap heuristic
+// (1 per shared tag + 2 same area + 2 same project).
 func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int, filter domain.AuthFilter) ([]domain.RankedNote, error) {
 	np, err := s.normalizeRef(ref)
 	if err != nil {
@@ -374,6 +376,30 @@ func (s *NoteService) Related(ctx context.Context, ref domain.NoteRef, limit int
 	note, err := s.vault.Get(ctx, np.Storage)
 	if err != nil {
 		return nil, err
+	}
+	if s.semanticSearcher != nil && note.Body != "" {
+		// Over-fetch by 1 to allow excluding the source note from its own results.
+		hits, serr := s.semanticSearcher.SemanticSearch(ctx, note.Body, filter, domain.SemanticSearchOptions{
+			Limit: limit + 1,
+		})
+		if serr == nil {
+			out := make([]domain.RankedNote, 0, limit)
+			for _, h := range hits {
+				if h.Ref.Path == np.Storage && h.Ref.Scope == ref.Scope {
+					continue
+				}
+				other, gerr := s.vault.Get(ctx, h.Ref.Path)
+				if gerr != nil {
+					continue
+				}
+				out = append(out, domain.RankedNote{Summary: other.Summary(), Score: h.Score})
+				if len(out) == limit {
+					break
+				}
+			}
+			return out, nil
+		}
+		// Fall through to heuristic on semantic error.
 	}
 	result, err := s.vault.Query(ctx, domain.NewQueryRequest(
 		domain.WithQueryFilter(filter.Filter),
