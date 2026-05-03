@@ -35,7 +35,7 @@ type externalItem struct {
 // Purger orchestrates local and external note purge operations and the reconciliation sweeper.
 type Purger struct {
 	mu       sync.Mutex
-	vs       ports.VectorStore
+	vs       ports.VectorTombstoner
 	ds       derived.Store
 	cfg      Config
 	extQueue []externalItem
@@ -50,7 +50,7 @@ type Purger struct {
 }
 
 // New creates a Purger.
-func New(vs ports.VectorStore, ds derived.Store, cfg Config) *Purger {
+func New(vs ports.VectorTombstoner, ds derived.Store, cfg Config) *Purger {
 	if cfg.StartupSweepMax <= 0 {
 		cfg.StartupSweepMax = defaultStartupSweepMax
 	}

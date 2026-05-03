@@ -23,7 +23,7 @@ type buildConfig struct {
 	rbacRegistry             *rbac.Registry
 	exposeAdminTools         bool
 	requirePromotionApproval bool
-	semanticEnricher         SemanticEnricher
+	semanticEnricher         ports.SemanticEnricher
 }
 
 // WithScopeResolver sets the scope resolver (default: personal only).
@@ -76,7 +76,7 @@ func WithRequirePromotionApproval(v bool) Option {
 
 // WithSemanticEnricher attaches a SemanticEnricher that populates Derived and
 // IndexState on mutation responses. Pass nil to disable enrichment (default).
-func WithSemanticEnricher(e SemanticEnricher) Option {
+func WithSemanticEnricher(e ports.SemanticEnricher) Option {
 	return func(c *buildConfig) { c.semanticEnricher = e }
 }
 

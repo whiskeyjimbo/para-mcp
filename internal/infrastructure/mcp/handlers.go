@@ -10,7 +10,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
+	"github.com/whiskeyjimbo/paras/internal/ctxutil"
 	"github.com/whiskeyjimbo/paras/internal/server/audit"
 	"github.com/whiskeyjimbo/paras/internal/server/auth"
 	"github.com/whiskeyjimbo/paras/internal/server/rbac"
@@ -30,7 +30,7 @@ type handlers struct {
 	rbacRegistry             *rbac.Registry
 	exposeAdminTools         bool
 	requirePromotionApproval bool
-	semanticEnricher         SemanticEnricher // optional; nil disables semantic enrichment
+	semanticEnricher         ports.SemanticEnricher // optional; nil disables semantic enrichment
 }
 
 // requireRole returns a permission_denied error result when the caller does not
@@ -516,12 +516,6 @@ func stringSliceVal(m map[string]any, key string) []string {
 	return nil
 }
 
-// SemanticEnricher populates Derived and IndexState on a NoteSummary after a mutation.
-// The implementation looks up the derived metadata store by ref; pass nil to skip enrichment.
-type SemanticEnricher interface {
-	Enrich(ctx context.Context, ref domain.NoteRef, sum *domain.NoteSummary)
-}
-
 // mutationResult flattens a MutationResult into a single JSON object, keeping
 // all summary fields at the top level alongside the ETag concurrency token and
 // optional semantic fields.
@@ -535,7 +529,7 @@ type mutationResult struct {
 
 const generatedWarning = "This response includes AI-generated content (summary, entities, suggested tags). Review before relying on it."
 
-func flatMutation(ctx context.Context, r domain.MutationResult, enr SemanticEnricher) mutationResult {
+func flatMutation(ctx context.Context, r domain.MutationResult, enr ports.SemanticEnricher) mutationResult {
 	sum := r.Summary
 	mr := mutationResult{NoteSummary: sum, ETag: r.ETag}
 	if enr == nil {
@@ -547,27 +541,9 @@ func flatMutation(ctx context.Context, r domain.MutationResult, enr SemanticEnri
 		mr.Warning = generatedWarning
 	}
 	if mr.IndexState != domain.IndexStateIndexed && mr.IndexState != "" {
-		mr.IndexStateExplainer = indexStateExplainer(mr.IndexState)
+		mr.IndexStateExplainer = mr.IndexState.Explain()
 	}
 	return mr
-}
-
-// indexStateExplainer returns a human-readable reason for non-indexed states.
-func indexStateExplainer(s domain.IndexState) string {
-	switch s {
-	case domain.IndexStatePending:
-		return "Note is queued for indexing and has not yet been processed by the semantic pipeline."
-	case domain.IndexStateFailed:
-		return "Semantic indexing failed after retries. Check logs for the embedding or summarisation error."
-	case domain.IndexStateSkippedShort:
-		return "Note body is too short to embed meaningfully and was skipped by the pipeline."
-	case domain.IndexStateSkippedUserEdited:
-		return "Derived metadata was edited by the user and will not be overwritten by the pipeline."
-	case domain.IndexStateTombstoned:
-		return "Note has been deleted and its vector records are marked for removal."
-	default:
-		return ""
-	}
 }
 
 func jsonResult(v any) (*mcplib.CallToolResult, error) {
@@ -610,7 +586,7 @@ func toolErr(ctx context.Context, err error) *mcplib.CallToolResult {
 			Message string `json:"message"`
 			Details detail `json:"details"`
 		}
-		reqID := remotevault.RequestIDFromContext(ctx)
+		reqID := ctxutil.RequestIDFromContext(ctx)
 		b, _ := json.Marshal(conflictResp{
 			Error:   "conflict",
 			Message: err.Error(),

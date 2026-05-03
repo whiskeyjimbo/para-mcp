@@ -10,24 +10,19 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"github.com/whiskeyjimbo/paras/internal/ctxutil"
 )
 
 const requestIDHeader = "X-PARA-Request-Id"
 
-// contextKey is the unexported type for context keys in this package.
-type contextKey int
-
-const requestIDKey contextKey = iota
-
 // WithRequestID stores a request ID in ctx for propagation to outbound calls.
 func WithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, requestIDKey, id)
+	return ctxutil.WithRequestID(ctx, id)
 }
 
 // RequestIDFromContext returns the request ID stored in ctx, or "".
 func RequestIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(requestIDKey).(string)
-	return v
+	return ctxutil.RequestIDFromContext(ctx)
 }
 
 // mcpConn wraps a connected MCP HTTP client.
@@ -39,7 +34,7 @@ type mcpConn struct {
 // The request ID from ctx is forwarded as X-PARA-Request-Id on every call.
 func newConn(baseURL string) (*mcpConn, error) {
 	headerFunc := transport.HTTPHeaderFunc(func(ctx context.Context) map[string]string {
-		if id := RequestIDFromContext(ctx); id != "" {
+		if id := ctxutil.RequestIDFromContext(ctx); id != "" {
 			return map[string]string{requestIDHeader: id}
 		}
 		return nil

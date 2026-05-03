@@ -27,6 +27,14 @@ type VectorStore interface {
 	ListTombstoned(ctx context.Context, limit int) ([]string, error)
 }
 
+// VectorTombstoner is the narrow interface required by the tombstone sweeper.
+// Implementations of VectorStore satisfy this automatically.
+type VectorTombstoner interface {
+	Delete(ctx context.Context, ids []string) error
+	Tombstone(ctx context.Context, ids []string) error
+	ListTombstoned(ctx context.Context, limit int) ([]string, error)
+}
+
 // Summarizer generates DerivedMetadata for a note body.
 type Summarizer interface {
 	Summarize(ctx context.Context, ref domain.NoteRef, body string) (*domain.DerivedMetadata, error)
@@ -35,4 +43,10 @@ type Summarizer interface {
 // Reranker re-scores vector hits given the original query string.
 type Reranker interface {
 	Rerank(ctx context.Context, query string, hits []domain.VectorHit) ([]domain.VectorHit, error)
+}
+
+// SemanticEnricher populates Derived and IndexState on a NoteSummary after a mutation.
+// Pass nil to skip enrichment entirely.
+type SemanticEnricher interface {
+	Enrich(ctx context.Context, ref domain.NoteRef, sum *domain.NoteSummary)
 }

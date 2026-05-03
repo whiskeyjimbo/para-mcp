@@ -5,7 +5,7 @@ import (
 	"regexp"
 
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
+	"github.com/whiskeyjimbo/paras/internal/ctxutil"
 )
 
 // requestIDPattern is the canonical format for X-PARA-Request-Id values.
@@ -33,7 +33,7 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 				http.Error(w, "invalid_argument: "+requestIDHeader+": malformed request ID", http.StatusBadRequest)
 				return
 			}
-			r = r.WithContext(remotevault.WithRequestID(r.Context(), id))
+			r = r.WithContext(ctxutil.WithRequestID(r.Context(), id))
 		}
 		next.ServeHTTP(w, r)
 	})

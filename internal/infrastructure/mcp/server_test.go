@@ -10,7 +10,7 @@ import (
 	"github.com/whiskeyjimbo/paras/internal/application"
 	"github.com/whiskeyjimbo/paras/internal/core/domain"
 	"github.com/whiskeyjimbo/paras/internal/core/ports"
-	"github.com/whiskeyjimbo/paras/internal/infra/remotevault"
+	"github.com/whiskeyjimbo/paras/internal/ctxutil"
 	"github.com/whiskeyjimbo/paras/internal/infrastructure/storage/localvault"
 )
 
@@ -188,7 +188,7 @@ func TestConflictError_DetailsRequestID(t *testing.T) {
 
 	// Attempt update with stale ETag + a request ID in context.
 	const reqID = "req_01HZZZZZZZZZZZZZZZZZZZZZZA"
-	ctxWithID := remotevault.WithRequestID(ctx, reqID)
+	ctxWithID := ctxutil.WithRequestID(ctx, reqID)
 	staleReq := mcplib.CallToolRequest{}
 	staleReq.Params.Arguments = map[string]any{
 		"scope":    "personal",

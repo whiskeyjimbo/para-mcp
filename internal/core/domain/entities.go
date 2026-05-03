@@ -99,6 +99,24 @@ const (
 	IndexStateTombstoned        IndexState = "tombstoned"
 )
 
+// Explain returns a human-readable reason for non-indexed states, or "" for indexed/unknown.
+func (s IndexState) Explain() string {
+	switch s {
+	case IndexStatePending:
+		return "Note is queued for indexing and has not yet been processed by the semantic pipeline."
+	case IndexStateFailed:
+		return "Semantic indexing failed after retries. Check logs for the embedding or summarisation error."
+	case IndexStateSkippedShort:
+		return "Note body is too short to embed meaningfully and was skipped by the pipeline."
+	case IndexStateSkippedUserEdited:
+		return "Derived metadata was edited by the user and will not be overwritten by the pipeline."
+	case IndexStateTombstoned:
+		return "Note has been deleted and its vector records are marked for removal."
+	default:
+		return ""
+	}
+}
+
 // DerivedMetadata holds model-generated fields for a note.
 type DerivedMetadata struct {
 	Summary       string    `json:"summary"`
