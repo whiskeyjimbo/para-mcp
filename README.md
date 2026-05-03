@@ -32,8 +32,6 @@ vault/
 - [Authentication (Server Mode)](#authentication-server-mode)
 - [Architecture](#architecture)
 - [Development](#development)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
