@@ -17,3 +17,28 @@ type VectorHit struct {
 	Score float64
 	Body  string
 }
+
+// BodyMode controls whether semantic search results include note bodies.
+type BodyMode string
+
+const (
+	// BodyNever omits note bodies from semantic search results.
+	BodyNever BodyMode = "never"
+	// BodyOnDemand loads full note bodies for the top results. When no
+	// threshold is set, only the top BodyOnDemandTopK results carry bodies.
+	BodyOnDemand BodyMode = "on_demand"
+)
+
+// BodyOnDemandTopK is the default cap on body-loaded results when BodyOnDemand
+// is requested without a threshold.
+const BodyOnDemandTopK = 3
+
+// SemanticSearchOptions configures a NoteService.SemanticSearch call.
+type SemanticSearchOptions struct {
+	// Limit caps the number of returned results. Zero means service default.
+	Limit int
+	// Threshold is the cosine-similarity floor. Zero disables the floor.
+	Threshold float64
+	// BodyMode selects whether result bodies are loaded.
+	BodyMode BodyMode
+}

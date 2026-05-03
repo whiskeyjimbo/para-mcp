@@ -314,6 +314,44 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	return jsonResult(results)
 }
 
+func (h *handlers) notesSemanticSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
+	bodyMode := domain.BodyMode(req.GetString("body", string(domain.BodyNever)))
+	switch bodyMode {
+	case domain.BodyNever, domain.BodyOnDemand:
+	default:
+		return mcplib.NewToolResultError("invalid_argument: body must be 'never' or 'on_demand'"), nil
+	}
+	threshold := req.GetFloat("threshold", 0)
+	if threshold < 0 || threshold > 1 {
+		return mcplib.NewToolResultError("invalid_argument: threshold must be in [0,1]"), nil
+	}
+
+	filter := domain.AuthFilter{
+		Filter: domain.NewFilter(
+			domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
+			domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
+		),
+		AllowedScopes: h.scopes.Scopes(ctx),
+	}
+	opts := domain.SemanticSearchOptions{
+		Limit:     req.GetInt("limit", defaultSearchLimit),
+		Threshold: threshold,
+		BodyMode:  bodyMode,
+	}
+	results, err := h.svc.SemanticSearch(ctx, query, filter, opts)
+	if err != nil {
+		return toolErr(ctx, err), nil
+	}
+	if results == nil {
+		results = []domain.RankedNote{}
+	}
+	return jsonResult(results)
+}
+
 func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	stats, err := h.svc.Stats(ctx)
 	if err != nil {
@@ -562,6 +600,14 @@ func parseCategorySlice(raw []string) []domain.Category {
 	return cats
 }
 
+func parseScopeSlice(raw []string) []domain.ScopeID {
+	out := make([]domain.ScopeID, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, domain.ScopeID(s))
+	}
+	return out
+}
+
 var errPrefixes = []struct {
 	sentinel error
 	prefix   string
@@ -572,6 +618,7 @@ var errPrefixes = []struct {
 	{domain.ErrScopeForbidden, "scope_forbidden"},
 	{domain.ErrUnavailable, "unavailable"},
 	{domain.ErrInvalidCursor, "invalid_argument"},
+	{domain.ErrCapabilityUnavailable, "capability_unavailable"},
 }
 
 // toolErr converts a domain error to an MCP tool error result.

@@ -50,3 +50,13 @@ type Reranker interface {
 type SemanticEnricher interface {
 	Enrich(ctx context.Context, ref domain.NoteRef, sum *domain.NoteSummary)
 }
+
+// SemanticSearcher runs a pure vector query and returns hits already deduplicated
+// to one-per-NoteRef with chunk-aggregated scores. Implementations are responsible
+// for embedding the query, calling VectorStore.Search, applying the threshold
+// floor, and trimming to opts.Limit. AllowedScopes pre-filtering is enforced
+// inside VectorStore.Search; callers must supply a non-nil AllowedScopes slice
+// (the NoteService boundary checks this).
+type SemanticSearcher interface {
+	SemanticSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.SemanticSearchOptions) ([]domain.VectorHit, error)
+}

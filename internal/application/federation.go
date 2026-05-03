@@ -1,6 +1,7 @@
 package application
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -312,6 +313,66 @@ func (f *FederationService) Search(ctx context.Context, text string, filter doma
 		}
 		return 0
 	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+// SemanticSearch fans out across the federated scopes and merges by score
+// (descending), trimming to opts.Limit. Per-scope errors are dropped (matching
+// federation.Search behaviour); a partial result is preferred over no result.
+func (f *FederationService) SemanticSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.SemanticSearchOptions) ([]domain.RankedNote, error) {
+	if filter.AllowedScopes == nil {
+		return nil, errAllowedScopesNil
+	}
+	scopes := f.effectiveScopes(filter.AllowedScopes, filter.Scopes)
+
+	type result struct {
+		notes []domain.RankedNote
+		err   error
+	}
+	ch := make(chan result, len(scopes))
+	var wg sync.WaitGroup
+	for _, scope := range scopes {
+		e, ok := f.reg.EntryFor(scope)
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(entry *VaultEntry, sc domain.ScopeID) {
+			defer wg.Done()
+			ns, err := entry.svc.SemanticSearch(ctx, query, domain.AuthFilter{
+				Filter:        filter.Filter,
+				AllowedScopes: []domain.ScopeID{sc},
+			}, opts)
+			ch <- result{notes: ns, err: err}
+		}(e, scope)
+	}
+	wg.Wait()
+	close(ch)
+
+	var all []domain.RankedNote
+	var unavailableSeen bool
+	for r := range ch {
+		if r.err != nil {
+			if errors.Is(r.err, domain.ErrCapabilityUnavailable) {
+				unavailableSeen = true
+			}
+			continue
+		}
+		all = append(all, r.notes...)
+	}
+	if len(all) == 0 && unavailableSeen {
+		return nil, domain.ErrCapabilityUnavailable
+	}
+	slices.SortFunc(all, func(a, b domain.RankedNote) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
 	if len(all) > limit {
 		all = all[:limit]
 	}

@@ -126,6 +126,21 @@ func toolNotesSearch() mcplib.Tool {
 	)
 }
 
+func toolNotesSemanticSearch() mcplib.Tool {
+	return mcplib.NewTool("notes_semantic_search",
+		mcplib.WithDescription("Vector similarity search over note bodies. Returns notes whose meaning matches the query, even without keyword overlap."),
+		mcplib.WithString("query", mcplib.Required(), mcplib.Description("Natural-language query")),
+		mcplib.WithArray("scopes", mcplib.WithStringItems(), mcplib.Description("Restrict to these scope IDs")),
+		mcplib.WithArray("categories", mcplib.WithStringItems(), mcplib.Description("Limit to PARA categories")),
+		mcplib.WithNumber("limit", mcplib.Description("Max results (default 10)")),
+		mcplib.WithNumber("threshold", mcplib.Description("Cosine-similarity floor in [0,1]; 0 disables")),
+		mcplib.WithString("body",
+			mcplib.Enum(string(domain.BodyNever), string(domain.BodyOnDemand)),
+			mcplib.Description("Body policy: never (default) or on_demand (top-3 with bodies when no threshold)"),
+		),
+	)
+}
+
 func toolVaultStats() mcplib.Tool {
 	return mcplib.NewTool("vault_stats",
 		mcplib.WithDescription("Return aggregate note counts by PARA category."),

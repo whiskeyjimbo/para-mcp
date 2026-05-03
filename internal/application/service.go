@@ -36,6 +36,7 @@ type NoteService struct {
 	idMinter         func() string
 	clock            func() time.Time
 	relatedScanLimit int
+	semanticSearcher ports.SemanticSearcher
 }
 
 // Option configures a NoteService.
@@ -55,6 +56,12 @@ func WithIDMinter(fn func() string) Option {
 // when computing related notes (default: 1000).
 func WithRelatedScanLimit(n int) Option {
 	return func(s *NoteService) { s.relatedScanLimit = n }
+}
+
+// WithSemanticSearcher attaches a SemanticSearcher used by SemanticSearch.
+// When nil (default) SemanticSearch returns ErrCapabilityUnavailable.
+func WithSemanticSearcher(ss ports.SemanticSearcher) Option {
+	return func(s *NoteService) { s.semanticSearcher = ss }
 }
 
 // WithClock overrides the time source used by Stale (default: time.Now).
@@ -182,6 +189,47 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Aut
 		return nil, nil
 	}
 	return s.vault.Search(ctx, text, filter.Filter, limit)
+}
+
+// SemanticSearch runs a pure vector search and projects hits to RankedNote.
+// When BodyMode == BodyOnDemand and no threshold is set, only the top
+// BodyOnDemandTopK results carry note bodies. Returns ErrCapabilityUnavailable
+// when no SemanticSearcher is configured.
+func (s *NoteService) SemanticSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.SemanticSearchOptions) ([]domain.RankedNote, error) {
+	if s.semanticSearcher == nil {
+		return nil, domain.ErrCapabilityUnavailable
+	}
+	ok, err := s.checkScopes(filter.AllowedScopes)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return []domain.RankedNote{}, nil
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 10
+	}
+	hits, err := s.semanticSearcher.SemanticSearch(ctx, query, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	bodyCap := len(hits)
+	if opts.BodyMode == domain.BodyOnDemand && opts.Threshold == 0 && bodyCap > domain.BodyOnDemandTopK {
+		bodyCap = domain.BodyOnDemandTopK
+	}
+	out := make([]domain.RankedNote, 0, len(hits))
+	for i, h := range hits {
+		note, gerr := s.vault.Get(ctx, h.Ref.Path)
+		if gerr != nil {
+			continue
+		}
+		rn := domain.RankedNote{Summary: note.Summary(), Score: h.Score}
+		if opts.BodyMode == domain.BodyOnDemand && i < bodyCap {
+			rn.Body = note.Body
+		}
+		out = append(out, rn)
+	}
+	return out, nil
 }
 
 func (s *NoteService) Stats(ctx context.Context) (domain.VaultStats, error) {

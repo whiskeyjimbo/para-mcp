@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,113 @@ func TestWithClockInjectedIntoNotesStale(t *testing.T) {
 // TestConflictError_DetailsRequestID verifies that a stale-ETag write returns a
 // JSON body with {"error":"conflict","details":{"request_id":"..."}} when the
 // caller supplies an X-PARA-Request-Id via context.
+func TestNotesSemanticSearch_CapabilityUnavailable(t *testing.T) {
+	svc := newTestService(t)
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "auth refactor"}
+	res, err := h.notesSemanticSearch(context.Background(), req)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error result when no semantic searcher configured")
+	}
+	text := res.Content[0].(mcplib.TextContent).Text
+	if !strings.Contains(text, "capability_unavailable") {
+		t.Errorf("expected capability_unavailable in error, got %q", text)
+	}
+}
+
+type stubSemSearcher struct {
+	hits []domain.VectorHit
+}
+
+func (s *stubSemSearcher) SemanticSearch(_ context.Context, _ string, _ domain.AuthFilter, _ domain.SemanticSearchOptions) ([]domain.VectorHit, error) {
+	return s.hits, nil
+}
+
+func TestNotesSemanticSearch_RoutesArgsAndReturnsRanked(t *testing.T) {
+	v, err := localvault.New("personal", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault.New: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	stub := &stubSemSearcher{}
+	svc := application.NewService(v, application.WithSemanticSearcher(stub))
+	mr, err := svc.Create(context.Background(), domain.CreateInput{
+		Path:        "projects/oidc.md",
+		FrontMatter: domain.FrontMatter{Title: "OIDC migration"},
+		Body:        "long body text",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	stub.hits = []domain.VectorHit{{Ref: mr.Summary.Ref, Score: 0.91}}
+
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"query": "auth refactor",
+		"body":  "on_demand",
+		"limit": float64(5),
+	}
+	res, err := h.notesSemanticSearch(context.Background(), req)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %v", res.Content)
+	}
+	var got []domain.RankedNote
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1", len(got))
+	}
+	if got[0].Body == "" {
+		t.Error("body=on_demand should populate body")
+	}
+	if got[0].Summary.Title != "OIDC migration" {
+		t.Errorf("Title: got %q", got[0].Summary.Title)
+	}
+}
+
+func TestNotesSemanticSearch_RejectsInvalidBodyMode(t *testing.T) {
+	svc := application.NewService(&scopeRecorder{}, application.WithSemanticSearcher(&stubSemSearcher{}))
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "q", "body": "weird"}
+	res, _ := h.notesSemanticSearch(context.Background(), req)
+	if !res.IsError {
+		t.Fatal("expected invalid_argument for unknown body mode")
+	}
+}
+
+func TestNotesSemanticSearch_RejectsBadThreshold(t *testing.T) {
+	svc := application.NewService(&scopeRecorder{}, application.WithSemanticSearcher(&stubSemSearcher{}))
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "q", "threshold": 1.5}
+	res, _ := h.notesSemanticSearch(context.Background(), req)
+	if !res.IsError {
+		t.Fatal("expected invalid_argument for out-of-range threshold")
+	}
+}
+
 func TestConflictError_DetailsRequestID(t *testing.T) {
 	svc := newTestService(t)
 	h := &handlers{

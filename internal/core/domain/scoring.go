@@ -7,9 +7,12 @@ import (
 )
 
 // RankedNote pairs a summary with a relevance score from search.
+// Body is populated only by tools that opt in to body loading
+// (e.g. notes_semantic_search with body=on_demand).
 type RankedNote struct {
 	Summary NoteSummary
 	Score   float64
+	Body    string `json:"body,omitempty"`
 }
 
 // ScoreRelatedness scores candidate against target: 1pt per shared tag,

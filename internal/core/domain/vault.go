@@ -14,6 +14,9 @@ var (
 	ErrScopeForbidden     = errors.New("scope not permitted")
 	ErrUnavailable        = errors.New("all scopes unavailable")
 	ErrInvalidCursor      = errors.New("cursor invalid or expired")
+	// ErrCapabilityUnavailable indicates a tool was invoked but its backing
+	// capability (e.g. semantic search) is not configured on this server.
+	ErrCapabilityUnavailable = errors.New("capability_unavailable")
 )
 
 // SearchMode selects the retrieval strategy.
