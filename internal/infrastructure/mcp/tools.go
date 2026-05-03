@@ -126,6 +126,16 @@ func toolNotesSearch() mcplib.Tool {
 	)
 }
 
+func toolNotesHybridSearch() mcplib.Tool {
+	return mcplib.NewTool("notes_hybrid_search",
+		mcplib.WithDescription("Hybrid BM25 + vector search fused via Reciprocal Rank Fusion. Falls back to lexical-only when semantic infra is unavailable."),
+		mcplib.WithString("query", mcplib.Required(), mcplib.Description("Search query")),
+		mcplib.WithArray("scopes", mcplib.WithStringItems(), mcplib.Description("Restrict to these scope IDs")),
+		mcplib.WithArray("categories", mcplib.WithStringItems(), mcplib.Description("Limit to PARA categories")),
+		mcplib.WithNumber("limit", mcplib.Description("Max results (default 10)")),
+	)
+}
+
 func toolNotesSemanticSearch() mcplib.Tool {
 	return mcplib.NewTool("notes_semantic_search",
 		mcplib.WithDescription("Vector similarity search over note bodies. Returns notes whose meaning matches the query, even without keyword overlap."),

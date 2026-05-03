@@ -191,6 +191,82 @@ func (s *NoteService) Search(ctx context.Context, text string, filter domain.Aut
 	return s.vault.Search(ctx, text, filter.Filter, limit)
 }
 
+// HybridSearch fuses BM25 (lexical) and vector results via Reciprocal Rank
+// Fusion. When no SemanticSearcher is configured, falls back to lexical-only
+// results — never errors with capability_unavailable.
+func (s *NoteService) HybridSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.HybridSearchOptions) ([]domain.RankedNote, error) {
+	ok, err := s.checkScopes(filter.AllowedScopes)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return []domain.RankedNote{}, nil
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	overFetch := limit * 4
+
+	lex, lerr := s.vault.Search(ctx, query, filter.Filter, overFetch)
+	if lerr != nil {
+		lex = nil
+	}
+	var sem []domain.VectorHit
+	if s.semanticSearcher != nil {
+		semHits, serr := s.semanticSearcher.SemanticSearch(ctx, query, filter, domain.SemanticSearchOptions{
+			Limit: overFetch,
+		})
+		if serr == nil {
+			sem = semHits
+		}
+	}
+
+	type fused struct {
+		ref     domain.NoteRef
+		summary domain.NoteSummary
+		score   float64
+	}
+	byRef := map[domain.NoteRef]*fused{}
+	for i, ln := range lex {
+		f, ok := byRef[ln.Summary.Ref]
+		if !ok {
+			f = &fused{ref: ln.Summary.Ref, summary: ln.Summary}
+			byRef[ln.Summary.Ref] = f
+		}
+		f.score += domain.RRFAlpha * (1.0 / float64(domain.RRFK+i+1))
+	}
+	for i, vh := range sem {
+		f, ok := byRef[vh.Ref]
+		if !ok {
+			note, gerr := s.vault.Get(ctx, vh.Ref.Path)
+			if gerr != nil {
+				continue
+			}
+			f = &fused{ref: vh.Ref, summary: note.Summary()}
+			byRef[vh.Ref] = f
+		}
+		f.score += (1.0 - domain.RRFAlpha) * (1.0 / float64(domain.RRFK+i+1))
+	}
+	out := make([]domain.RankedNote, 0, len(byRef))
+	for _, f := range byRef {
+		out = append(out, domain.RankedNote{Summary: f.summary, Score: f.score})
+	}
+	slices.SortFunc(out, func(a, b domain.RankedNote) int {
+		if b.Score > a.Score {
+			return 1
+		}
+		if b.Score < a.Score {
+			return -1
+		}
+		return 0
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // SemanticSearch runs a pure vector search and projects hits to RankedNote.
 // When BodyMode == BodyOnDemand and no threshold is set, only the top
 // BodyOnDemandTopK results carry note bodies. Returns ErrCapabilityUnavailable

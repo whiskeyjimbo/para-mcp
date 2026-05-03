@@ -314,6 +314,29 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	return jsonResult(results)
 }
 
+func (h *handlers) notesHybridSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcplib.NewToolResultError(err.Error()), nil
+	}
+	filter := domain.AuthFilter{
+		Filter: domain.NewFilter(
+			domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
+			domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
+		),
+		AllowedScopes: h.scopes.Scopes(ctx),
+	}
+	opts := domain.HybridSearchOptions{Limit: req.GetInt("limit", defaultSearchLimit)}
+	results, err := h.svc.HybridSearch(ctx, query, filter, opts)
+	if err != nil {
+		return toolErr(ctx, err), nil
+	}
+	if results == nil {
+		results = []domain.RankedNote{}
+	}
+	return jsonResult(results)
+}
+
 func (h *handlers) notesSemanticSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	query, err := req.RequireString("query")
 	if err != nil {

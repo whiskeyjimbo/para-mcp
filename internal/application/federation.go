@@ -319,6 +319,58 @@ func (f *FederationService) Search(ctx context.Context, text string, filter doma
 	return all, nil
 }
 
+// HybridSearch fans out across the federated scopes. Each entry runs its own
+// RRF (BM25 + vector) locally; the federator merges results by score.
+func (f *FederationService) HybridSearch(ctx context.Context, query string, filter domain.AuthFilter, opts domain.HybridSearchOptions) ([]domain.RankedNote, error) {
+	if filter.AllowedScopes == nil {
+		return nil, errAllowedScopesNil
+	}
+	scopes := f.effectiveScopes(filter.AllowedScopes, filter.Scopes)
+
+	type result struct {
+		notes []domain.RankedNote
+		err   error
+	}
+	ch := make(chan result, len(scopes))
+	var wg sync.WaitGroup
+	for _, scope := range scopes {
+		e, ok := f.reg.EntryFor(scope)
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(entry *VaultEntry, sc domain.ScopeID) {
+			defer wg.Done()
+			ns, err := entry.svc.HybridSearch(ctx, query, domain.AuthFilter{
+				Filter:        filter.Filter,
+				AllowedScopes: []domain.ScopeID{sc},
+			}, opts)
+			ch <- result{notes: ns, err: err}
+		}(e, scope)
+	}
+	wg.Wait()
+	close(ch)
+
+	var all []domain.RankedNote
+	for r := range ch {
+		if r.err != nil {
+			continue
+		}
+		all = append(all, r.notes...)
+	}
+	slices.SortFunc(all, func(a, b domain.RankedNote) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 // SemanticSearch fans out across the federated scopes and merges by score
 // (descending), trimming to opts.Limit. Per-scope errors are dropped (matching
 // federation.Search behaviour); a partial result is preferred over no result.

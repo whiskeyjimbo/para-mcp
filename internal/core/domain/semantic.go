@@ -42,3 +42,20 @@ type SemanticSearchOptions struct {
 	// BodyMode selects whether result bodies are loaded.
 	BodyMode BodyMode
 }
+
+// RRF (Reciprocal Rank Fusion) constants. Hybrid search merges BM25 and
+// vector ranklists using score(d) = sum(1 / (RRFK + rank_i)) per list,
+// then weights the lists by RRFAlpha (lexical) and 1-RRFAlpha (semantic).
+const (
+	// RRFK dampens the contribution of low-ranked items.
+	RRFK = 60
+	// RRFAlpha is the lexical/semantic weight. 0.5 = equal weighting.
+	// Held fixed until Phase 7 auto-tuning.
+	RRFAlpha = 0.5
+)
+
+// HybridSearchOptions configures a NoteService.HybridSearch call.
+type HybridSearchOptions struct {
+	// Limit caps the number of returned results. Zero means service default.
+	Limit int
+}

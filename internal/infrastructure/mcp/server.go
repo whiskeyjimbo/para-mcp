@@ -124,6 +124,7 @@ func Build(svc ports.NoteService, opts ...Option) *mcpserver.MCPServer {
 	s.AddTool(toolNotesList(), h.notesList)
 	s.AddTool(toolNotesSearch(), h.notesSearch)
 	s.AddTool(toolNotesSemanticSearch(), h.notesSemanticSearch)
+	s.AddTool(toolNotesHybridSearch(), h.notesHybridSearch)
 	s.AddTool(toolVaultStats(), h.vaultStats)
 
 	s.AddTool(toolNotesBacklinks(), h.notesBacklinks)
