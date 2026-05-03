@@ -59,3 +59,28 @@ type HybridSearchOptions struct {
 	// Limit caps the number of returned results. Zero means service default.
 	Limit int
 }
+
+// SummariesMode controls whether NoteSummary.Derived (LLM-derived metadata)
+// is included on list/query responses.
+type SummariesMode string
+
+const (
+	// SummariesAuto: include Derived as the source produced it.
+	SummariesAuto SummariesMode = "auto"
+	// SummariesAlways: always include Derived (no-op when source has none).
+	SummariesAlways SummariesMode = "always"
+	// SummariesNever: strip Derived from every result.
+	SummariesNever SummariesMode = "never"
+)
+
+// ApplySummariesMode mutates summaries in place to match the requested mode.
+// SummariesAuto and SummariesAlways are no-ops at this layer; only Never
+// strips the Derived field.
+func ApplySummariesMode(summaries []NoteSummary, mode SummariesMode) {
+	if mode != SummariesNever {
+		return
+	}
+	for i := range summaries {
+		summaries[i].Derived = nil
+	}
+}

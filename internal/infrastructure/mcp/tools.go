@@ -115,6 +115,10 @@ func toolNotesList() mcplib.Tool {
 		mcplib.WithNumber("limit", mcplib.Description("Max results (1-100, default 20)")),
 		mcplib.WithNumber("offset", mcplib.Description("Pagination offset (max 500; prefer cursor)")),
 		mcplib.WithString("cursor", mcplib.Description("Opaque pagination cursor from a previous notes_list response")),
+		mcplib.WithString("summaries",
+			mcplib.Enum(string(domain.SummariesAuto), string(domain.SummariesAlways), string(domain.SummariesNever)),
+			mcplib.Description("Whether to include LLM-derived summaries on results (default auto)"),
+		),
 	)
 }
 
@@ -127,6 +131,7 @@ func toolNotesSearch() mcplib.Tool {
 			mcplib.Enum(string(domain.SearchModeLexical), string(domain.SearchModeSemantic), string(domain.SearchModeHybrid)),
 			mcplib.Description("Retrieval mode: lexical|semantic|hybrid"),
 		),
+		mcplib.WithBoolean("include_archives", mcplib.Description("Include archived notes (default false)")),
 	)
 }
 
@@ -146,6 +151,7 @@ func toolNotesHybridSearch() mcplib.Tool {
 		mcplib.WithArray("scopes", mcplib.WithStringItems(), mcplib.Description("Restrict to these scope IDs")),
 		mcplib.WithArray("categories", mcplib.WithStringItems(), mcplib.Description("Limit to PARA categories")),
 		mcplib.WithNumber("limit", mcplib.Description("Max results (default 10)")),
+		mcplib.WithBoolean("include_archives", mcplib.Description("Include archived notes (default false)")),
 	)
 }
 
@@ -161,6 +167,7 @@ func toolNotesSemanticSearch() mcplib.Tool {
 			mcplib.Enum(string(domain.BodyNever), string(domain.BodyOnDemand)),
 			mcplib.Description("Body policy: never (default) or on_demand (top-3 with bodies when no threshold)"),
 		),
+		mcplib.WithBoolean("include_archives", mcplib.Description("Include archived notes (default false)")),
 	)
 }
 

@@ -281,6 +281,13 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 	if offset > maxListOffset {
 		return mcplib.NewToolResultError(fmt.Sprintf("offset %d exceeds maximum %d; use cursor for deep pagination", offset, maxListOffset)), nil
 	}
+	summariesStr := req.GetString("summaries", string(domain.SummariesAuto))
+	summaries := domain.SummariesMode(summariesStr)
+	switch summaries {
+	case domain.SummariesAuto, domain.SummariesAlways, domain.SummariesNever:
+	default:
+		return mcplib.NewToolResultError("invalid_argument: summaries must be auto, always, or never"), nil
+	}
 	cats := parseCategorySlice(req.GetStringSlice("categories", nil))
 	result, err := h.svc.Query(ctx, domain.NewQueryRequest(
 		domain.WithQueryFilter(domain.NewFilter(
@@ -298,7 +305,28 @@ func (h *handlers) notesList(ctx context.Context, req mcplib.CallToolRequest) (*
 	if err != nil {
 		return toolErr(ctx, err), nil
 	}
+	domain.ApplySummariesMode(result.Notes, summaries)
 	return jsonResult(result)
+}
+
+// searchEnvelope is the response shape for all notes_*search tools. Wrapping
+// the result list in an object lets us attach hint fields (archive_hint) when
+// the caller's filter forced an empty result that might otherwise have matched
+// archived notes.
+type searchEnvelope struct {
+	Results     []domain.RankedNote `json:"results"`
+	ArchiveHint bool                `json:"archive_hint,omitempty"`
+}
+
+func searchResult(results []domain.RankedNote, includeArchives bool) searchEnvelope {
+	if results == nil {
+		results = []domain.RankedNote{}
+	}
+	env := searchEnvelope{Results: results}
+	if len(results) == 0 && !includeArchives {
+		env.ArchiveHint = true
+	}
+	return env
 }
 
 func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -307,7 +335,12 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
 	limit := req.GetInt("limit", defaultSearchLimit)
-	filter := domain.AuthFilter{AllowedScopes: h.scopes.Scopes(ctx)}
+	includeArchives := req.GetBool("include_archives", false)
+	baseFilter := domain.NewFilter()
+	if includeArchives {
+		baseFilter = domain.NewFilter(domain.WithIncludeArchives())
+	}
+	filter := domain.AuthFilter{Filter: baseFilter, AllowedScopes: h.scopes.Scopes(ctx)}
 
 	modeStr := req.GetString("mode", "")
 	mode := domain.SearchMode(modeStr)
@@ -337,10 +370,7 @@ func (h *handlers) notesSearch(ctx context.Context, req mcplib.CallToolRequest) 
 	if err != nil {
 		return toolErr(ctx, err), nil
 	}
-	if results == nil {
-		results = []domain.RankedNote{}
-	}
-	return jsonResult(results)
+	return jsonResult(searchResult(results, includeArchives))
 }
 
 type waitForIndexResp struct {
@@ -385,11 +415,16 @@ func (h *handlers) notesHybridSearch(ctx context.Context, req mcplib.CallToolReq
 	if err != nil {
 		return mcplib.NewToolResultError(err.Error()), nil
 	}
+	includeArchives := req.GetBool("include_archives", false)
+	filterOpts := []domain.FilterOption{
+		domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
+		domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
+	}
+	if includeArchives {
+		filterOpts = append(filterOpts, domain.WithIncludeArchives())
+	}
 	filter := domain.AuthFilter{
-		Filter: domain.NewFilter(
-			domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
-			domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
-		),
+		Filter:        domain.NewFilter(filterOpts...),
 		AllowedScopes: h.scopes.Scopes(ctx),
 	}
 	opts := domain.HybridSearchOptions{Limit: req.GetInt("limit", defaultSearchLimit)}
@@ -397,10 +432,7 @@ func (h *handlers) notesHybridSearch(ctx context.Context, req mcplib.CallToolReq
 	if err != nil {
 		return toolErr(ctx, err), nil
 	}
-	if results == nil {
-		results = []domain.RankedNote{}
-	}
-	return jsonResult(results)
+	return jsonResult(searchResult(results, includeArchives))
 }
 
 func (h *handlers) notesSemanticSearch(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
@@ -419,11 +451,16 @@ func (h *handlers) notesSemanticSearch(ctx context.Context, req mcplib.CallToolR
 		return mcplib.NewToolResultError("invalid_argument: threshold must be in [0,1]"), nil
 	}
 
+	includeArchives := req.GetBool("include_archives", false)
+	filterOpts := []domain.FilterOption{
+		domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
+		domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
+	}
+	if includeArchives {
+		filterOpts = append(filterOpts, domain.WithIncludeArchives())
+	}
 	filter := domain.AuthFilter{
-		Filter: domain.NewFilter(
-			domain.WithScopes(parseScopeSlice(req.GetStringSlice("scopes", nil))...),
-			domain.WithCategories(parseCategorySlice(req.GetStringSlice("categories", nil))...),
-		),
+		Filter:        domain.NewFilter(filterOpts...),
 		AllowedScopes: h.scopes.Scopes(ctx),
 	}
 	opts := domain.SemanticSearchOptions{
@@ -435,10 +472,7 @@ func (h *handlers) notesSemanticSearch(ctx context.Context, req mcplib.CallToolR
 	if err != nil {
 		return toolErr(ctx, err), nil
 	}
-	if results == nil {
-		results = []domain.RankedNote{}
-	}
-	return jsonResult(results)
+	return jsonResult(searchResult(results, includeArchives))
 }
 
 func (h *handlers) vaultStats(ctx context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {

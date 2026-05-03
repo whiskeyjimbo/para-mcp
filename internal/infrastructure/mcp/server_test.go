@@ -219,18 +219,21 @@ func TestNotesSemanticSearch_RoutesArgsAndReturnsRanked(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected error result: %v", res.Content)
 	}
-	var got []domain.RankedNote
+	var got searchEnvelope
 	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("got %d results, want 1", len(got))
+	if len(got.Results) != 1 {
+		t.Fatalf("got %d results, want 1", len(got.Results))
 	}
-	if got[0].Body == "" {
+	if got.Results[0].Body == "" {
 		t.Error("body=on_demand should populate body")
 	}
-	if got[0].Summary.Title != "OIDC migration" {
-		t.Errorf("Title: got %q", got[0].Summary.Title)
+	if got.Results[0].Summary.Title != "OIDC migration" {
+		t.Errorf("Title: got %q", got.Results[0].Summary.Title)
+	}
+	if got.ArchiveHint {
+		t.Error("non-empty results should not set archive_hint")
 	}
 }
 
@@ -313,6 +316,92 @@ func TestNotesSearch_ModeRouting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSearch_ArchiveHintOnZeroResultWithoutArchives(t *testing.T) {
+	svc := newTestService(t)
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"text": "nonexistent-term-xyz"}
+	res, err := h.notesSearch(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("unexpected: err=%v isErr=%v", err, res.IsError)
+	}
+	var got searchEnvelope
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.ArchiveHint {
+		t.Error("expected archive_hint=true for zero-result lexical search w/o archives")
+	}
+	if len(got.Results) != 0 {
+		t.Errorf("expected empty results, got %d", len(got.Results))
+	}
+}
+
+func TestSearch_NoArchiveHintWithIncludeArchivesTrue(t *testing.T) {
+	svc := newTestService(t)
+	h := &handlers{
+		svc:    svc,
+		scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+	}
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"text": "nonexistent-term-xyz", "include_archives": true}
+	res, _ := h.notesSearch(context.Background(), req)
+	var got searchEnvelope
+	if err := json.Unmarshal([]byte(res.Content[0].(mcplib.TextContent).Text), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.ArchiveHint {
+		t.Error("archive_hint should not be set when include_archives=true")
+	}
+}
+
+func TestNotesList_SummariesNeverStripsDerived(t *testing.T) {
+	v, err := localvault.New("personal", t.TempDir())
+	if err != nil {
+		t.Fatalf("localvault: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	svc := application.NewService(v)
+	_, err = svc.Create(context.Background(), domain.CreateInput{
+		Path: "projects/x.md", FrontMatter: domain.FrontMatter{Title: "x"}, Body: "x",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Localvault doesn't populate Derived; assert handler accepts the param + does not crash.
+	for _, mode := range []string{"auto", "always", "never"} {
+		t.Run(mode, func(t *testing.T) {
+			h := &handlers{
+				svc:    svc,
+				scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+			}
+			req := mcplib.CallToolRequest{}
+			req.Params.Arguments = map[string]any{"summaries": mode}
+			res, err := h.notesList(context.Background(), req)
+			if err != nil || res.IsError {
+				t.Fatalf("mode %s: err=%v isErr=%v %v", mode, err, res.IsError, res.Content)
+			}
+		})
+	}
+
+	t.Run("invalid", func(t *testing.T) {
+		h := &handlers{
+			svc:    svc,
+			scopes: ports.ScopesFunc(func(_ context.Context) []domain.ScopeID { return []domain.ScopeID{"personal"} }),
+		}
+		req := mcplib.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"summaries": "garbage"}
+		res, _ := h.notesList(context.Background(), req)
+		if !res.IsError {
+			t.Fatal("expected invalid_argument for unknown summaries mode")
+		}
+	})
 }
 
 type stubIndexStateProvider struct {
