@@ -1,0 +1,82 @@
+{
+  "corpus": [
+    {
+      "id": "auth-oidc",
+      "title": "OIDC migration plan",
+      "body": "Migrate authentication from session cookies to OpenID Connect. Includes identity provider setup and token validation."
+    },
+    {
+      "id": "auth-sso",
+      "title": "SSO rollout for engineering",
+      "body": "Single sign-on rollout across engineering teams. Authentication is centralized through the identity provider."
+    },
+    {
+      "id": "perf-cache",
+      "title": "Query cache for hot endpoints",
+      "body": "Add an LRU query cache in front of the read API to reduce database pressure on hot endpoints."
+    },
+    {
+      "id": "perf-bench",
+      "title": "Benchmark harness",
+      "body": "Continuous benchmark harness measuring p50 and p95 latency across critical request paths."
+    },
+    {
+      "id": "infra-vpc",
+      "title": "VPC peering review",
+      "body": "Quarterly review of VPC peering connections, network ACLs, and route tables across environments."
+    },
+    {
+      "id": "infra-iam",
+      "title": "IAM cleanup",
+      "body": "Audit unused IAM roles and consolidate permissions. Identity and access cleanup across cloud accounts."
+    },
+    {
+      "id": "doc-runbook",
+      "title": "Incident runbook",
+      "body": "Runbook for handling on-call incidents, including escalation policy and postmortem checklist."
+    },
+    {
+      "id": "doc-onboarding",
+      "title": "Engineering onboarding",
+      "body": "Onboarding checklist for new engineers including environment setup, repo access, and team introductions."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-vpc",
+      "class": "lexical-overlap",
+      "text": "VPC peering",
+      "relevance": {"infra-vpc": 1}
+    },
+    {
+      "id": "q-runbook",
+      "class": "lexical-overlap",
+      "text": "incident runbook",
+      "relevance": {"doc-runbook": 1}
+    },
+    {
+      "id": "q-cache",
+      "class": "lexical-overlap",
+      "text": "query cache hot endpoints",
+      "relevance": {"perf-cache": 1}
+    },
+    {
+      "id": "q-iam",
+      "class": "lexical-overlap",
+      "text": "IAM roles cleanup",
+      "relevance": {"infra-iam": 1}
+    },
+    {
+      "id": "q-auth-keyword",
+      "class": "lexical-overlap",
+      "text": "OpenID Connect identity provider",
+      "relevance": {"auth-oidc": 1, "auth-sso": 1}
+    },
+    {
+      "id": "q-onboarding",
+      "class": "lexical-overlap",
+      "text": "engineering onboarding checklist",
+      "relevance": {"doc-onboarding": 1}
+    }
+  ]
+}

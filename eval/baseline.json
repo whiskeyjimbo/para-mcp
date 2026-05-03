@@ -1,0 +1,8 @@
+{
+  "lexical-overlap": {
+    "ndcg_10": 1,
+    "recall_10": 1,
+    "mrr": 1,
+    "queries": 6
+  }
+}
