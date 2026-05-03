@@ -386,19 +386,6 @@ paras/
     decisions/            # ADRs
     features/             # feature specs and acceptance tests
 ```
-
-### Key Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `github.com/mark3labs/mcp-go` | MCP protocol |
-| `github.com/kljensen/snowball` | Porter stemming for BM25 search |
-| `github.com/fsnotify/fsnotify` | Filesystem watcher |
-| `github.com/oklog/ulid/v2` | NoteID generation |
-| `github.com/zeebo/blake3` | ETag hashing |
-| `github.com/lestrrat-go/jwx/v2` | JWT/OIDC validation |
-| `github.com/jackc/pgx/v5` | PostgreSQL backend (server mode) |
-
 ---
 
 ## Development
